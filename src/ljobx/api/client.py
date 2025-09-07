@@ -35,12 +35,17 @@ class ApiClient:
         return response.text
 
     async def get_job_list(self, query_params):
-        url = f"{self.BASE_LIST_URL}?{urlencode(query_params)}"
-        try:
-            return await self._fetch(url, timeout=10)
-        except Exception as e:
-            logger.error("Error fetching job list for URL %s: %s", url, e)
-            return None
+        """
+        Fetches a page of job listings with a delay.
+        """
+        async with self.semaphore:
+            await asyncio.sleep(self.delay)  # <-- DELAY ADDED HERE
+            url = f"{self.BASE_LIST_URL}?{urlencode(query_params)}"
+            try:
+                return await self._fetch(url, timeout=10)
+            except Exception as e:
+                logger.error("Error fetching job list for URL %s: %s", url, e)
+                return None
 
     async def get_job_details(self, job_id):
         async with self.semaphore:
