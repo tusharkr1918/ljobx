@@ -39,7 +39,7 @@ class ApiClient:
         Fetches a page of job listings with a delay.
         """
         async with self.semaphore:
-            await asyncio.sleep(self.delay)  # <-- DELAY ADDED HERE
+            await asyncio.sleep(self.delay)
             url = f"{self.BASE_LIST_URL}?{urlencode(query_params)}"
             try:
                 return await self._fetch(url, timeout=10)
