@@ -1,0 +1,16 @@
+# Virtual environment
+.venv/
+
+# Python build/dist
+build/
+dist/
+*.egg-info/
+
+# Byte-compiled / cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE files
+.idea/
+*.iml
