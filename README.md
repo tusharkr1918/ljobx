@@ -1,4 +1,4 @@
-# LinkedIn Job Scraper (ljobx)
+# LinkedIn Job Extractor (ljobx)
 
 A fast and simple **command-line tool** to scrape LinkedIn job postings without needing to log in.
 It uses LinkedIn’s guest APIs and provides filtering options, concurrency, and structured JSON output.
