@@ -175,6 +175,7 @@ class LinkedInScraper:
                         "company": clean_text(company_el.get_text())
                     })
 
+            log.info("Processed page %d (start_index=%d): found %d jobs",(start_index // len(job_cards)) + 1, start_index, len(job_cards))
             start_index += len(job_cards)
 
         log.info("Found %d total jobs. Now fetching details...", len(all_jobs))

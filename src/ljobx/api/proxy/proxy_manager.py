@@ -77,8 +77,9 @@ class ProxyRouter:
             proxy for sublist in list_of_proxy_lists for proxy in sublist
         ))
 
-        log.info(f"Fetched a total of {len(all_proxies)} unique proxies.")
+        log.info(f"Found a total of {len(all_proxies)} unique proxies.")
         if validate:
             return await cls._filter_valid_proxies(all_proxies)
+        log.warning("Proxy validation is disabled, skipping validation...")
         return all_proxies
 

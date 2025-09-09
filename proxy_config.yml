@@ -1,6 +1,0 @@
-proxy_providers:
-
-  - name: webshare
-    config:
-      api_key: "zhmxf67qdevnm3fmr5cau0pqpucj3ux4feu1aahi"
-      page_size: 10

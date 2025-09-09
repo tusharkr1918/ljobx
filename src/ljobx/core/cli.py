@@ -10,7 +10,7 @@ from ljobx.utils.const import FILTERS
 from ljobx.core.config import config
 from ljobx.core.scraper import run_scraper
 from ljobx.core.proxy_loader import ConfigLoader
-from ljobx.api.proxy.proxy_router import ProxyRouter
+from ljobx.api.proxy.proxy_manager import ProxyRouter
 
 
 def main():
@@ -62,14 +62,13 @@ Example Usage:
 
     args = parser.parse_args()
 
-    # Initialize logger first
+    # Initialize logger
     logger.setup_logger(args.log_level)
     log = logger.get_logger(__name__)
 
-    # Determine the final output directory
     output_dir = Path(args.output_path) if args.output_path else config.BASE_DIR
 
-    # --- Consolidate All Settings for a Single, Clean Log Message ---
+    # --- Log Message ---
     search_criteria = {
         key: value for key, value in vars(args).items()
         if value is not None and key in FILTERS
@@ -103,12 +102,12 @@ Example Usage:
         log.info(f"Loading proxies from '{args.proxy_config}'...")
         try:
             config_data = ConfigLoader.load(args.proxy_config)
-            proxies = asyncio.run(ProxyRouter.get_proxies_from_config(config_data, validate=True))
+            proxies = asyncio.run(ProxyRouter.get_proxies_from_config(config_data, validate=config_data.get("validate_proxies", True)))
             if not proxies:
                 log.warning("No working proxies found from the provided configuration. The scraper will run without proxies.")
         except (ValueError, FileNotFoundError) as e:
             log.error(f"Failed to load proxies: {e}")
-            return  # Exit if proxy config is provided but fails
+            return
 
     scraper_settings["proxies"] = proxies
     results = asyncio.run(
