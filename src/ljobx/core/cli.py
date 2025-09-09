@@ -3,6 +3,7 @@ import asyncio
 import json
 import shutil
 import time
+from pathlib import Path
 
 from ljobx.utils import logger
 from ljobx.utils.const import FILTERS
@@ -56,6 +57,8 @@ Example Usage:
                                help="Set logging level (default: INFO)")
     scraper_group.add_argument("--proxy-config", type=str, default=None, metavar="FILE_OR_URL",
                                help="Path or URL to the proxy configuration YAML file.")
+    scraper_group.add_argument("--output-path", type=str, default=None,
+                               help=f"Path to save output files (default: {config.BASE_DIR}).")
 
     args = parser.parse_args()
 
@@ -63,7 +66,37 @@ Example Usage:
     logger.setup_logger(args.log_level)
     log = logger.get_logger(__name__)
 
-    log.info(f"Scraper starting for '{args.keywords}' in '{args.location}'")
+    # Determine the final output directory
+    output_dir = Path(args.output_path) if args.output_path else config.BASE_DIR
+
+    # --- Consolidate All Settings for a Single, Clean Log Message ---
+    search_criteria = {
+        key: value for key, value in vars(args).items()
+        if value is not None and key in FILTERS
+    }
+    search_criteria['keywords'] = args.keywords
+    search_criteria['location'] = args.location
+
+    scraper_settings = {
+        "max_jobs": args.max_jobs,
+        "concurrency_limit": args.concurrency,
+        "delay": {"min_val": args.delay[0], "max_val": args.delay[1]},
+    }
+
+    run_config = {
+        "Search Criteria": search_criteria,
+        "Scraper Settings": scraper_settings,
+        "System Settings": {
+            "log_level": args.log_level,
+            "proxy_config_path": args.proxy_config,
+            "output_path": str(output_dir)
+        }
+    }
+
+    log.info(
+        "\n--- LJOBX Configuration ---\n%s\n-----------------------------",
+        json.dumps(run_config, indent=4, default=str)
+    )
 
     proxies = []
     if args.proxy_config:
@@ -71,36 +104,13 @@ Example Usage:
         try:
             config_data = ConfigLoader.load(args.proxy_config)
             proxies = asyncio.run(ProxyRouter.get_proxies_from_config(config_data, validate=True))
-            if proxies:
-                log.info(f"Successfully loaded and validated {len(proxies)} working proxies.")
-            else:
-                log.warning("No working proxies found from the provided configuration.")
+            if not proxies:
+                log.warning("No working proxies found from the provided configuration. The scraper will run without proxies.")
         except (ValueError, FileNotFoundError) as e:
             log.error(f"Failed to load proxies: {e}")
-            return
+            return  # Exit if proxy config is provided but fails
 
-    scraper_settings = {
-        "max_jobs": args.max_jobs,
-        "concurrency_limit": args.concurrency,
-        "delay": {"min_val": args.delay[0], "max_val": args.delay[1]},
-        "proxies": proxies
-    }
-
-    search_criteria = {
-        key: value for key, value in vars(args).items()
-        if value is not None and key not in ["max_jobs", "concurrency", "delay", "log_level", "proxy_config"]
-    }
-
-    log.info(
-        "\n--- Scraper Configuration ---\n"
-        "Search Criteria : %s\n"
-        "Scraper Settings: %s\n"
-        "-----------------------------",
-        json.dumps(search_criteria, indent=4),
-        json.dumps({k: v for k, v in scraper_settings.items() if k != 'proxies'}, indent=4)
-    )
-
-    # Run scraper
+    scraper_settings["proxies"] = proxies
     results = asyncio.run(
         run_scraper(search_criteria=search_criteria, **scraper_settings)
     )
@@ -109,7 +119,7 @@ Example Usage:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         base_name = search_criteria['keywords'].lower().replace(' ', '_')
         filename = f"{base_name}_{timestamp}.json"
-        output_path = config.BASE_DIR / filename
+        output_path = output_dir / filename
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
@@ -117,7 +127,7 @@ Example Usage:
 
         log.info(f"Successfully extracted {len(results)} jobs -> saved to {output_path}")
 
-        latest_path = config.BASE_DIR / f"{base_name}_latest.json"
+        latest_path = output_dir / f"{base_name}_latest.json"
         try:
             if latest_path.exists() or latest_path.is_symlink():
                 latest_path.unlink()
@@ -130,3 +140,4 @@ Example Usage:
 
 if __name__ == "__main__":
     main()
+

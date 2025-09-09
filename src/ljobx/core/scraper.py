@@ -9,7 +9,7 @@ from ljobx.api.linkedin_api import LinkedInApi
 from ljobx.utils.const import FILTERS
 from ljobx.utils.logger import get_logger
 
-logger = get_logger(__name__)
+log = get_logger(__name__)
 
 
 def clean_text(text: str | None) -> str | None:
@@ -22,8 +22,12 @@ class LinkedInScraper:
     Scrapes LinkedIn jobs using a direct API approach with a powerful query builder.
     """
 
-    def __init__(self, concurrency_limit: int = 5, delay: int = 1):
-        self.client = LinkedInApi(concurrency_limit=concurrency_limit, delay=delay)
+    def __init__(self, concurrency_limit: int = 5, delay: int = 1, proxies: List[str] | None = None):
+        self.client = LinkedInApi(
+            concurrency_limit=concurrency_limit,
+            delay=delay,
+            proxies=proxies
+        )
 
     @classmethod
     def build_search_query(cls, criteria: Dict[str, Any]) -> Dict[str, str]:
@@ -56,7 +60,7 @@ class LinkedInScraper:
         """Parses the HTML of a job details page to extract structured data."""
         details = {"job_id": job["job_id"]}
         if isinstance(html_content, dict) and 'error' in html_content:
-            logger.warning(
+            log.warning(
                 "Could not fetch details for '%s' at '%s' (ID: %s). Reason: %s",
                 job.get('title', 'N/A'),
                 job.get('company', 'N/A'),
@@ -84,7 +88,7 @@ class LinkedInScraper:
         description = desc_div.get_text(separator='\n', strip=True) if desc_div else None
         details["description"] = description
 
-        logger.info(
+        log.info(
             "Parsed: %s | %s | %s...",
             job.get('company', 'N/A'),
             job.get('title', 'N/A'),
@@ -138,7 +142,7 @@ class LinkedInScraper:
     async def run(self, search_criteria: Dict[str, Any], max_jobs: int = 50) -> List[Dict[str, Any]]:
         """Executes the full scraping pipeline."""
         validated_query = self.build_search_query(search_criteria)
-        logger.info("Starting fetch with validated query parameters: %s", json.dumps(validated_query, indent=2))
+        log.debug("Starting fetch with validated query parameters: %s", json.dumps(validated_query, indent=2))
 
         all_jobs: List[Dict[str, str]] = []
         start_index = 0
@@ -149,14 +153,14 @@ class LinkedInScraper:
             html_content = await self.client.get_job_list(query_params)
 
             if not html_content:
-                logger.info("No more job listings found. Ending scrape.")
+                log.info("No more job listings found. Ending scrape.")
                 break
 
             soup = BeautifulSoup(html_content, "html.parser")
             job_cards = soup.find_all("div", class_="base-search-card")
 
             if not job_cards:
-                logger.info("Reached the end of job listings.")
+                log.info("Reached the end of job listings.")
                 break
 
             for card in job_cards:
@@ -173,7 +177,7 @@ class LinkedInScraper:
 
             start_index += len(job_cards)
 
-        logger.info("Found %d total jobs. Now fetching details...", len(all_jobs))
+        log.info("Found %d total jobs. Now fetching details...", len(all_jobs))
 
         target_jobs = all_jobs[:max_jobs]
         detail_tasks = [self._get_and_parse_details(job) for job in target_jobs]
@@ -202,12 +206,16 @@ async def run_scraper(
     """
     A convenient wrapper to initialize and run the LinkedIn scraper.
     """
-    print(proxies)
-
     if delay is None:
         delay = {"min_val": 2, "max_val": 8}
 
-    logger.info("Starting scraper for keywords: '%s'", search_criteria.get('keywords', 'N/A'))
+    if proxies:
+        log.debug(f"Scraper will use a pool of {len(proxies)} proxies.")
+
     random_delay = random.randint(delay["min_val"], delay["max_val"])
-    scraper = LinkedInScraper(concurrency_limit, random_delay)
+    scraper = LinkedInScraper(
+        concurrency_limit=concurrency_limit,
+        delay=random_delay,
+        proxies=proxies
+    )
     return await scraper.run(search_criteria=search_criteria, max_jobs=max_jobs)
