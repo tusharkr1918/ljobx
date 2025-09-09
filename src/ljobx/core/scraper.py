@@ -5,7 +5,7 @@ from typing import Dict, List, Any
 
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs, unquote
-from ljobx.api.client import ApiClient
+from ljobx.api.linkedin_api import LinkedInApi
 from ljobx.utils.const import FILTERS
 from ljobx.utils.logger import get_logger
 
@@ -23,7 +23,7 @@ class LinkedInScraper:
     """
 
     def __init__(self, concurrency_limit: int = 5, delay: int = 1):
-        self.client = ApiClient(concurrency_limit=concurrency_limit, delay=delay)
+        self.client = LinkedInApi(concurrency_limit=concurrency_limit, delay=delay)
 
     @classmethod
     def build_search_query(cls, criteria: Dict[str, Any]) -> Dict[str, str]:
@@ -196,13 +196,16 @@ async def run_scraper(
         search_criteria: Dict[str, Any],
         max_jobs: int = 25,
         concurrency_limit: int = 5,
-        delay: Dict[str, int] | None = None
+        delay: Dict[str, int] | None = None,
+        proxies: List[str] | None = None,
 ) -> List[Dict[str, Any]]:
     """
     A convenient wrapper to initialize and run the LinkedIn scraper.
     """
+    print(proxies)
+
     if delay is None:
-        delay = {"min_val": 1, "max_val": 3}
+        delay = {"min_val": 2, "max_val": 8}
 
     logger.info("Starting scraper for keywords: '%s'", search_criteria.get('keywords', 'N/A'))
     random_delay = random.randint(delay["min_val"], delay["max_val"])

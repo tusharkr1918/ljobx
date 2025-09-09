@@ -1,0 +1,24 @@
+import yaml
+import httpx
+
+class ConfigLoader:
+    @staticmethod
+    def load(path_or_url: str) -> dict:
+        if path_or_url.lower().startswith(('http://', 'https://')):
+            try:
+                response = httpx.get(path_or_url, follow_redirects=True)
+                response.raise_for_status()
+                config_text = response.text
+            except httpx.RequestError as e:
+                raise ValueError(f"Failed to fetch YAML from URL: {e}")
+        else:
+            try:
+                with open(path_or_url, 'r') as f:
+                    config_text = f.read()
+            except FileNotFoundError:
+                raise ValueError(f"Config file not found: '{path_or_url}'")
+
+        try:
+            return yaml.safe_load(config_text)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Error parsing YAML content: {e}")

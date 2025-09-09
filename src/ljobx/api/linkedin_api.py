@@ -8,7 +8,7 @@ from ljobx.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-class ApiClient:
+class LinkedInApi:
     """
     Handles all the network requests for the LinkedIn scraper using httpx.
     """

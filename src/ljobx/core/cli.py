@@ -8,13 +8,18 @@ from ljobx.utils import logger
 from ljobx.utils.const import FILTERS
 from ljobx.core.config import config
 from ljobx.core.scraper import run_scraper
+from ljobx.core.proxy_loader import ConfigLoader
+from ljobx.api.proxy.proxy_router import ProxyRouter
+
 
 def main():
     """Parses command-line arguments and runs the LinkedIn job scraper."""
 
     epilog_example = """
 Example Usage:
-  ljobx "Senior Python Developer" "Noida, India" --job-type "Full-time" "Contract" --date-posted "Past week" --max-jobs 50 --concurrency 2 --delay 3 8 --log-level DEBUG
+  ljobx "Senior Python Developer" "Noida, India" --max-jobs 50 --log-level DEBUG
+  ljobx "Data Scientist" "Remote" --job-type "Full-time" --proxy-config "config.yml"
+  ljobx "SDE" "United States" --proxy-config "https://path.to/your/config.yml"
 """
 
     parser = argparse.ArgumentParser(
@@ -23,12 +28,10 @@ Example Usage:
         formatter_class=argparse.RawTextHelpFormatter
     )
 
-    # Required arguments
     required_group = parser.add_argument_group("Required Arguments")
     required_group.add_argument("keywords", type=str, help="Job title or keywords to search for.")
     required_group.add_argument("location", type=str, help="Geographical location to search in.")
 
-    # Filtering options
     filter_group = parser.add_argument_group("Filtering Options")
     for key, param_config in FILTERS.items():
         flag_name = f"--{key.replace('_', '-')}"
@@ -41,7 +44,6 @@ Example Usage:
         else:
             filter_group.add_argument(flag_name, type=str, choices=param_config['options'].keys(), help=help_text)
 
-    # Scraper settings
     scraper_group = parser.add_argument_group("Scraper Settings")
     scraper_group.add_argument("--max-jobs", type=int, default=25,
                                help="Maximum number of jobs to scrape (default: 25).")
@@ -52,28 +54,51 @@ Example Usage:
     scraper_group.add_argument("--log-level", type=str, default="INFO",
                                choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                                help="Set logging level (default: INFO)")
+    scraper_group.add_argument("--proxy-config", type=str, default=None, metavar="FILE_OR_URL",
+                               help="Path or URL to the proxy configuration YAML file.")
 
     args = parser.parse_args()
 
+    # Initialize logger first
     logger.setup_logger(args.log_level)
     log = logger.get_logger(__name__)
+
     log.info(f"Scraper starting for '{args.keywords}' in '{args.location}'")
+
+    proxies = []
+    if args.proxy_config:
+        log.info(f"Loading proxies from '{args.proxy_config}'...")
+        try:
+            config_data = ConfigLoader.load(args.proxy_config)
+            proxies = asyncio.run(ProxyRouter.get_proxies_from_config(config_data, validate=True))
+            if proxies:
+                log.info(f"Successfully loaded and validated {len(proxies)} working proxies.")
+            else:
+                log.warning("No working proxies found from the provided configuration.")
+        except (ValueError, FileNotFoundError) as e:
+            log.error(f"Failed to load proxies: {e}")
+            return
 
     scraper_settings = {
         "max_jobs": args.max_jobs,
         "concurrency_limit": args.concurrency,
-        "delay": {"min_val": args.delay[0], "max_val": args.delay[1]}
+        "delay": {"min_val": args.delay[0], "max_val": args.delay[1]},
+        "proxies": proxies
     }
 
     search_criteria = {
         key: value for key, value in vars(args).items()
-        if value is not None and key not in ["max_jobs", "concurrency", "delay", "log_level"]
+        if value is not None and key not in ["max_jobs", "concurrency", "delay", "log_level", "proxy_config"]
     }
 
-    print("--- Scraper Configuration ---")
-    print(f"Search Criteria: {search_criteria}")
-    print(f"Scraper Settings: {scraper_settings}")
-    print("-----------------------------\n")
+    log.info(
+        "\n--- Scraper Configuration ---\n"
+        "Search Criteria : %s\n"
+        "Scraper Settings: %s\n"
+        "-----------------------------",
+        json.dumps(search_criteria, indent=4),
+        json.dumps({k: v for k, v in scraper_settings.items() if k != 'proxies'}, indent=4)
+    )
 
     # Run scraper
     results = asyncio.run(
@@ -83,8 +108,8 @@ Example Usage:
     if results:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         base_name = search_criteria['keywords'].lower().replace(' ', '_')
-        filename = f"{base_name}_jobs_{timestamp}.json"
-        output_path = config.BASE_OUTPUT_DIR / filename
+        filename = f"{base_name}_{timestamp}.json"
+        output_path = config.BASE_DIR / filename
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
@@ -92,7 +117,7 @@ Example Usage:
 
         log.info(f"Successfully extracted {len(results)} jobs -> saved to {output_path}")
 
-        latest_path = config.BASE_OUTPUT_DIR / f"{base_name}_jobs_latest.json"
+        latest_path = config.BASE_DIR / f"{base_name}_latest.json"
         try:
             if latest_path.exists() or latest_path.is_symlink():
                 latest_path.unlink()
@@ -101,6 +126,7 @@ Example Usage:
         except (OSError, NotImplementedError):
             shutil.copy2(output_path, latest_path)
             log.warning(f"Symlink not supported, copied instead -> {latest_path}")
+
 
 if __name__ == "__main__":
     main()
