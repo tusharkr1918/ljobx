@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ljobx"
-version = "0.1.5"
+version = "0.1.8"
 authors = [
     { name="Tushar Kumar", email="tusharkr1918@gmail.com" },
 ]

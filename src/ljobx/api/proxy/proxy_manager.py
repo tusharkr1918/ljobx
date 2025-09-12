@@ -2,19 +2,34 @@ import httpx
 import asyncio
 from typing import Type, List
 
-from .webshare import WebshareProvider
+from .webshare_provider import WebshareProvider
 from .proxy_provider import ProxyProvider
 from ljobx.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-class ProxyRouter:
+class ProxyManager:
+    """
+    A class to manage multiple proxy providers, fetch proxies, and optionally validate them.
+
+    :ivar _providers: Mapping of provider names to their classes.
+    """
+
     _providers: dict[str, Type[ProxyProvider]] = {
         "webshare": WebshareProvider,
     }
 
+
     @classmethod
     def create_providers_from_config(cls, config_data: dict) -> List[ProxyProvider]:
+        """
+        Initialize proxy provider instances from configuration.
+
+        :param config_data: Should contain 'proxy_providers', a list of provider configs.
+        :return: List of initialized provider instances.
+        :raises ValueError: If config is invalid or provider name is unknown.
+        """
+
         provider_configs = config_data.get("proxy_providers")
         if not isinstance(provider_configs, list):
             raise ValueError("Config must contain a 'proxy_providers' key with a list.")
@@ -39,7 +54,21 @@ class ProxyRouter:
 
     @staticmethod
     async def _check_proxy(proxy: str, timeout: int = 5) -> str | None:
+        """
+        Check if a proxy is valid by sending a test request.
+
+        :param proxy: Proxy URL to test.
+        :param timeout: Request timeout in seconds. Defaults to 5.
+        :return: The proxy if valid, otherwise None.
+        """
+
         test_url = "https://api.ipify.org"
+
+        # This looks bs and kinda time-consuming, but I don't know any other way
+        # to validate proxies. Although, I have made it flag-based, if needed one
+        # can disable validating proxies from proxy configuration file as
+        # validate_proxies: false
+
         try:
             async with httpx.AsyncClient(proxy=proxy, timeout=timeout) as client:
                 resp = await client.get(test_url)
@@ -52,6 +81,13 @@ class ProxyRouter:
 
     @classmethod
     async def _filter_valid_proxies(cls, proxies: List[str]) -> List[str]:
+        """
+        Filter a list of proxies to include only valid ones.
+
+        :param proxies: List of proxy URLs.
+        :return: List containing only valid proxies.
+        """
+
         log.info(f"Validating {len(proxies)} proxies...")
         tasks = [cls._check_proxy(p) for p in proxies]
         results = await asyncio.gather(*tasks)
@@ -61,6 +97,14 @@ class ProxyRouter:
 
     @classmethod
     async def get_proxies_from_config(cls, config_data: dict, validate: bool = True) -> List[str]:
+        """
+        Fetch proxies from all configured providers and optionally validate them.
+
+        :param config_data: Configuration with proxy provider information.
+        :param validate: If True, return only valid proxies. Defaults to True.
+        :return: List of unique proxies (validated if requested).
+        """
+
         providers = cls.create_providers_from_config(config_data)
         if not providers:
             log.warning("No proxy providers initialized from config")

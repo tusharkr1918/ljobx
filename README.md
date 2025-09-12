@@ -1,7 +1,17 @@
 # LinkedIn Job Extractor (ljobx)
 
 A fast and simple **command-line tool** to scrape LinkedIn job postings without needing to log in.
-It uses LinkedIn’s guest APIs and provides filtering options, concurrency, and structured JSON output.
+It uses **LinkedIn’s guest APIs**, supports **proxy rotation**, and provides rich filtering, concurrency, and structured JSON output.
+
+---
+
+## 🔧 Features
+
+* ✅ Search LinkedIn jobs without authentication
+* ✅ Filter by **date posted, experience level, job type, remote options**
+* ✅ Concurrency & randomized delays for faster + safer scraping
+* ✅ Save results to **timestamped JSON files** + `latest` symlink
+* ✅ Proxy support via **YAML or remote config URLs**
 
 ---
 
@@ -33,7 +43,7 @@ ljobx "Senior Python Developer" "Noida, India" \
 
 ---
 
-## 🔧 CLI Options
+## 📌 CLI Options
 
 ### Required arguments
 
@@ -54,19 +64,52 @@ ljobx "Senior Python Developer" "Noida, India" \
 * `--delay MIN MAX` → Random delay between requests in seconds (default: 3 8)
 * `--log-level` → Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`)
 
+### Proxy configuration
+
+* `--proxy-config FILE_OR_URL` → Path or URL to a proxy YAML config
+
+Example config (`config.yml`):
+
+```yaml
+proxy_providers:
+  - name: webshare
+    config:
+      api_key: "your_api_key_here"
+      page_size: 10
+
+validate_proxies: false
+```
+
 ---
 
 ## 📂 Output
 
-Results are saved as JSON under the configured `BASE_OUTPUT_DIR`:
+Results are saved as JSON under the configured output directory:
 
-* Timestamped file:
-
-  ```
-  senior_python_developer_jobs_20250907_232501.json
-  ```
-* Latest symlink (or copy if symlinks not supported):
+* **Timestamped file:**
 
   ```
-  senior_python_developer_jobs_latest.json
+  senior_python_developer_20250907_232501.json
   ```
+* **Latest symlink (or copy if symlinks not supported):**
+
+  ```
+  senior_python_developer_latest.json
+  ```
+
+---
+
+## 🛠 Example with Proxy
+
+```sh
+ljobx "Data Scientist" "Noida, Inda" \
+      --max-jobs 30 \
+      --proxy-config "config.yml"
+```
+
+Or use a remote config:
+
+```sh
+ljobx "SDE" "United States" \
+      --proxy-config "https://path.to/your/config.yml"
+```

@@ -1,16 +1,59 @@
 import argparse
 import asyncio
-import json
-import shutil
-import time
-from pathlib import Path
 
 from ljobx.utils import logger
 from ljobx.utils.const import FILTERS
 from ljobx.core.config import config
 from ljobx.core.scraper import run_scraper
 from ljobx.core.proxy_loader import ConfigLoader
-from ljobx.api.proxy.proxy_manager import ProxyRouter
+from ljobx.api.proxy.proxy_manager import ProxyManager
+
+
+from pathlib import Path
+import pandas as pd
+import json
+import time, shutil
+
+def save_results(results, keyword, to_csv=False, out_dir=Path(".")) -> Path:
+    ts   = time.strftime("%Y%m%d_%H%M%S")
+    base = keyword.lower().replace(" ", "_")
+    ext  = "csv" if to_csv else "json"
+    out  = out_dir / f"{base}_{ts}.{ext}"
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    if to_csv:
+        df = pd.json_normalize(results)
+
+        for c in df.select_dtypes(include="object"):
+            df[c] = df[c].fillna("").astype(str).str.strip().str.replace("\n", "; ", regex=False)
+        df.columns = [c.replace(".", "_").upper() for c in df.columns]
+
+        overrides = {
+            "APPLY_URL": "APPLY_URL",
+            "APPLY_IS_EASY_APPLY": "EASY_APPLY",
+            "RECRUITER_PROFILE_URL": "RECRUITER_PROFILE",
+        }
+        df.rename(
+            columns={old: new for old, new in overrides.items() if old in df.columns},
+            inplace=True
+        )
+        df.to_csv(out, index=False, encoding="utf-8-sig")
+    else:
+        out.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+    # Create a symlink (or copy) named *_latest that
+    # always points to the newest output
+
+    latest = out_dir / f"{base}_latest.{ext}"
+    try:
+        if latest.exists() or latest.is_symlink():
+            latest.unlink()
+        latest.symlink_to(out.name)
+    except (OSError, NotImplementedError):
+        shutil.copy2(out, latest)
+    return out
+
 
 
 def main():
@@ -20,7 +63,7 @@ def main():
 Example Usage:
   ljobx "Senior Python Developer" "Noida, India" --max-jobs 50 --log-level DEBUG
   ljobx "Data Scientist" "Remote" --job-type "Full-time" --proxy-config "config.yml"
-  ljobx "SDE" "United States" --proxy-config "https://path.to/your/config.yml"
+  ljobx "SDE" "United States" --proxy-config "https://path.to/your/config.yml" --to-csv
 """
 
     parser = argparse.ArgumentParser(
@@ -59,6 +102,8 @@ Example Usage:
                                help="Path or URL to the proxy configuration YAML file.")
     scraper_group.add_argument("--output-path", type=str, default=None,
                                help=f"Path to save output files (default: {config.BASE_DIR}).")
+    scraper_group.add_argument("--to-csv", action="store_true",
+                               help="Save the output as a CSV file instead of JSON.")
 
     args = parser.parse_args()
 
@@ -68,7 +113,6 @@ Example Usage:
 
     output_dir = Path(args.output_path) if args.output_path else config.BASE_DIR
 
-    # --- Log Message ---
     search_criteria = {
         key: value for key, value in vars(args).items()
         if value is not None and key in FILTERS
@@ -102,7 +146,7 @@ Example Usage:
         log.info(f"Loading proxies from '{args.proxy_config}'...")
         try:
             config_data = ConfigLoader.load(args.proxy_config)
-            proxies = asyncio.run(ProxyRouter.get_proxies_from_config(config_data, validate=config_data.get("validate_proxies", True)))
+            proxies = asyncio.run(ProxyManager.get_proxies_from_config(config_data, validate=config_data.get("validate_proxies", True)))
             if not proxies:
                 log.warning("No working proxies found from the provided configuration. The scraper will run without proxies.")
         except (ValueError, FileNotFoundError) as e:
@@ -115,28 +159,14 @@ Example Usage:
     )
 
     if results:
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        base_name = search_criteria['keywords'].lower().replace(' ', '_')
-        filename = f"{base_name}_{timestamp}.json"
-        output_path = output_dir / filename
-
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
-
-        log.info(f"Successfully extracted {len(results)} jobs -> saved to {output_path}")
-
-        latest_path = output_dir / f"{base_name}_latest.json"
-        try:
-            if latest_path.exists() or latest_path.is_symlink():
-                latest_path.unlink()
-            latest_path.symlink_to(output_path.name)
-            log.info(f"Symlink updated -> {latest_path} -> {output_path.name}")
-        except (OSError, NotImplementedError):
-            shutil.copy2(output_path, latest_path)
-            log.warning(f"Symlink not supported, copied instead -> {latest_path}")
+        out = save_results(
+            results,
+            keyword=search_criteria['keywords'],
+            to_csv=args.to_csv,
+            out_dir=output_dir
+        )
+        log.info("Saved %d jobs -> %s", len(results), out)
 
 
 if __name__ == "__main__":
     main()
-

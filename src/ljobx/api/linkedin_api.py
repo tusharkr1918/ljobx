@@ -1,3 +1,5 @@
+import random
+
 import httpx
 import asyncio
 import itertools
@@ -20,7 +22,7 @@ class LinkedInApi:
     BASE_LIST_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
     BASE_DETAILS_URL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
 
-    def __init__(self, concurrency_limit=5, delay=1, proxies: List[str] | None = None):
+    def __init__(self, concurrency_limit=5, delay: Dict[str, int] | None = None, proxies: List[str] | None = None):
         self.semaphore = asyncio.Semaphore(concurrency_limit)
         self.delay = delay
         self.ua = UserAgent()
@@ -36,6 +38,13 @@ class LinkedInApi:
         self._proxy_cycle = itertools.cycle(self._client_keys)
 
         # Track proxy health (failures + cooldown)
+        # If any proxy fails, it will be skipped for a while until it recovers
+        # We decide it based on the number of failures and the time since the last failure
+        # Additional, max cooling time is 60s even though it fails multiple times
+
+        # None, is used as a fallback client when no proxies are provided
+        # this happens when the all proxies are cooling down
+
         self._proxy_failures: Dict[str | None, int] = {k: 0 for k in self._client_keys}
         self._proxy_cooldown: Dict[str | None, float] = {k: 0 for k in self._client_keys}
 
@@ -77,8 +86,20 @@ class LinkedInApi:
         self._proxy_failures[proxy_key] = 0
         self._proxy_cooldown[proxy_key] = 0
 
-    async def _fetch(self, url, timeout=10):
-        proxy_key = self._get_next_proxy()
+    async def _fetch_with_retry(self, url, attempts=3):
+        for _ in range(attempts):
+            proxy_key = self._get_next_proxy()
+            try:
+                return await self._fetch(url, proxy_key=proxy_key)
+            except [httpx.HTTPStatusError, httpx.RequestError, httpx.ConnectError] as e:
+                self._mark_failure(proxy_key)
+                logger.debug("Proxy %s failed on retry: %s", proxy_key, e)
+                continue
+        return None
+
+    async def _fetch(self, url, timeout=10, proxy_key=None):
+        if proxy_key is None:
+            proxy_key = self._get_next_proxy()
         client = self.client_map[proxy_key]
 
         if proxy_key:
@@ -97,7 +118,7 @@ class LinkedInApi:
 
     async def get_job_list(self, query_params):
         async with self.semaphore:
-            await asyncio.sleep(self.delay)
+            await asyncio.sleep(random.randint(self.delay["min_val"], self.delay["max_val"]))
             url = f"{self.BASE_LIST_URL}?{urlencode(query_params)}"
             try:
                 return await self._fetch(url, timeout=10)
@@ -107,7 +128,7 @@ class LinkedInApi:
 
     async def get_job_details(self, job_id):
         async with self.semaphore:
-            await asyncio.sleep(self.delay)
+            await asyncio.sleep(random.randint(self.delay["min_val"], self.delay["max_val"]))
             url = self.BASE_DETAILS_URL.format(job_id=job_id)
             try:
                 return await self._fetch(url, timeout=5)
