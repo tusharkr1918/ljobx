@@ -27,6 +27,7 @@ dependencies = [
     "platformdirs>=4.4.0",
     "socksio>=1.0.0",
     "PyYAML~=6.0.2",
+    "pandas~=2.3.2"
 ]
 
 [project.urls]
