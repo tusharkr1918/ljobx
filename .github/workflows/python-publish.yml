@@ -34,15 +34,13 @@ jobs:
     needs: release-build
     permissions:
       contents: read
-      id-token: write
-
     steps:
       - name: Retrieve release distributions
         uses: actions/download-artifact@v4
         with:
           name: release-dists
           path: dist/
-
+  
       - name: Publish release distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -50,3 +48,4 @@ jobs:
         env:
           PYPI_USERNAME: __token__
           PYPI_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+
