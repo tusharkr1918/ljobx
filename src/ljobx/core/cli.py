@@ -10,7 +10,7 @@ from pathlib import Path
 
 from ljobx.api.proxy.proxy_manager import ProxyManager
 from ljobx.core.config import config
-from ljobx.core.proxy_loader import ConfigLoader
+from ljobx.core.config_loader import ConfigLoader
 from ljobx.core.scraper import run_scraper
 from ljobx.utils import logger
 from ljobx.utils.const import FILTERS
@@ -87,9 +87,9 @@ def main():
     """Parses command-line arguments and runs the LinkedIn job scraper."""
     epilog_example = """
     Example Usage:
-      ljobx "Senior Python Developer" "Noida, India" --max-jobs 50 --log-level DEBUG
-      ljobx "Data Scientist" "Remote" --job-type "Full-time" --proxy-config "config.yml"
-      ljobx "SDE" "United States" --proxy-config "https://path.to/your/config.yml" --to-csv
+      ljobx "Senior Python Developer" "Delhi, India" --max-jobs 50 --log-level DEBUG
+      ljobx "Java Developer" "Remote" --job-type "Full-time" --proxy-config "config.yml"
+      ljobx "SDE" "Noida, India" --proxy-config "https://path.to/your/config.yml" --to-csv
     """
     parser = argparse.ArgumentParser(
         description="Scrape LinkedIn job postings using its internal API.",
@@ -114,8 +114,8 @@ def main():
 
     scraper_group = parser.add_argument_group("Scraper Settings")
     scraper_group.add_argument("--max-jobs", type=int, default=25, help="Maximum number of jobs to scrape (default: 25).")
-    scraper_group.add_argument("--concurrency", type=int, default=2, help="Number of concurrent requests for job details (default: 2).")
-    scraper_group.add_argument("--delay", type=int, nargs=2, metavar=("MIN", "MAX"), default=[3, 8], help="Min and max delay in seconds between concurrent requests (default: 1 8).")
+    scraper_group.add_argument("--concurrency", type=int, default=1, help="Number of concurrent requests for job details (default: 1).")
+    scraper_group.add_argument("--delay", type=int, nargs=2, metavar=("MIN", "MAX"), default=[3, 6], help="Min and max delay in seconds between concurrent requests (default: 3 6).")
     scraper_group.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Set logging level (default: INFO)")
     scraper_group.add_argument("--proxy-config", type=str, default=None, metavar="FILE_OR_URL", help="Path or URL to the proxy configuration YAML file.")
     scraper_group.add_argument("--output-path", type=str, default=None, help=f"Path to save output files (default: {config.BASE_DIR}).")

@@ -1,115 +1,111 @@
 # LinkedIn Job Extractor (ljobx)
 
-A fast and simple **command-line tool** to scrape LinkedIn job postings without needing to log in.
-It uses **LinkedIn’s guest APIs**, supports **proxy rotation**, and provides rich filtering, concurrency, and structured JSON output.
+A fast, simple **command-line tool** to scrape LinkedIn job postings without needing to log in. It uses LinkedIn’s public APIs, supports proxy rotation, and saves results to JSON or CSV.
 
----
+-----
 
-## 🔧 Features
+### ✨ Features
 
-* ✅ Search LinkedIn jobs without authentication
-* ✅ Filter by **date posted, experience level, job type, remote options**
-* ✅ Concurrency & randomized delays for faster + safer scraping
-* ✅ Save results to **timestamped JSON files** + `latest` symlink
-* ✅ Proxy support via **YAML or remote config URLs**
+* **No Login Needed**: Scrapes public job postings anonymously.
+* **Advanced Filtering**: Filter by date, experience level, job type, and remote options.
+* **Concurrent Scraping**: Fetches multiple jobs at once with randomized delays.
+* **Proxy Support**: Use proxies to avoid rate-limiting on distributed requests.
+* **Structured Output**: Save results as clean, timestamped `JSON` or `CSV` files.
+* **Latest Symlink**: Automatically creates a `_latest` file pointing to the newest results.
 
----
+-----
 
-## 🚀 Installation
-
-Install directly from **PyPI**:
+### 📥 Installation
 
 ```sh
 pip install ljobx
 ```
 
----
+-----
 
-## ⚡ Usage
+### 🚀 Usage
 
-Run `ljobx` from the command line:
+Provide a search query and a location. Use flags for more control.
 
 ```sh
+# Basic search saving to CSV
+ljobx "Software Engineer" "Remote" --to-csv
+
+# Advanced search with multiple filters
 ljobx "Senior Python Developer" "Noida, India" \
-      --job-type "Full-time" "Contract" \
-      --experience-level "Entry level" "Associate" \
+      --job-type "Full-time" \
       --date-posted "Past week" \
-      --remote "Hybrid" \
       --max-jobs 50 \
-      --concurrency 2 \
-      --delay 3 8 \
-      --log-level DEBUG
+      --concurrency 5
 ```
 
----
+-----
 
-## 📌 CLI Options
+### ⚙️ CLI Options
 
-### Required arguments
+**Required Arguments:**
 
-* `keywords` → Job title or keywords to search for
-* `location` → Geographical location to search in
+* `keywords`: The job title or skill to search for.
+* `location`: The geographical location (e.g., "Noida, India", "Remote").
 
-### Filtering options (from LinkedIn API)
+**Filtering Options:**
 
-* `--date-posted` → `Any time`, `Past month`, `Past week`, `Past day`
-* `--experience-level` → `Internship`, `Entry level`, `Associate`, `Mid-Senior level`, `Director`, `Executive`
-* `--job-type` → `Full-time`, `Part-time`, `Contract`, `Temporary`, `Volunteer`, `Internship`, `Other`
-* `--remote` → `On-site`, `Remote`, `Hybrid`
+* `--date-posted`: `Any time`, `Past month`, `Past week`, `Past 24 hours`
+* `--experience-level`: `Internship`, `Entry level`, `Associate`, `Mid-Senior level`, etc.
+* `--job-type`: `Full-time`, `Contract`, `Part-time`, etc.
+* `--remote`: `On-site`, `Remote`, `Hybrid`
 
-### Scraper settings
+**Scraper Settings:**
 
-* `--max-jobs` → Maximum number of jobs to scrape (default: 25)
-* `--concurrency` → Number of concurrent requests (default: 2)
-* `--delay MIN MAX` → Random delay between requests in seconds (default: 3 8)
-* `--log-level` → Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`)
+* `--max-jobs`: Max number of jobs to scrape (Default: `25`).
+* `--concurrency`: Number of parallel requests (Default: `2`).
+* `--delay MIN MAX`: Random delay range in seconds (Default: `3 8`).
+* `--to-csv`: Save output as a CSV file instead of JSON.
+* `--proxy-config FILE_OR_URL`: Path or URL to a proxy YAML config.
 
-### Proxy configuration
+> 💡 **A Note on Performance**: It's highly recommended to adjust `--concurrency` and `--delay` based on your proxy setup.
+>
+>   * **With many working proxies**, you can be more aggressive for faster scraping (e.g., `--concurrency 10 --delay 1 3`).
+>   * **With few or no proxies**, you must be conservative to avoid getting blocked. **It's safest to use the default values.**
 
-* `--proxy-config FILE_OR_URL` → Path or URL to a proxy YAML config
+-----
 
-Example config (`config.yml`):
+### 🔌 Proxy Configuration
+
+Proxy support is configured via a YAML file passed with the `--proxy-config` flag. Currently, **Webshare.io** is the only supported provider.
+
+**Example `config.yml`:**
 
 ```yaml
 proxy_providers:
-  - name: webshare
+  - name: webshare # Currently the only supported provider
     config:
-      api_key: "your_api_key_here"
-      page_size: 10
+      api_key: "YOUR_API_KEY_HERE"
 
-validate_proxies: false
+validate_proxies: false # Optional: skip proxy validation
 ```
 
----
-
-## 📂 Output
-
-Results are saved as JSON under the configured output directory:
-
-* **Timestamped file:**
-
-  ```
-  senior_python_developer_20250907_232501.json
-  ```
-* **Latest symlink (or copy if symlinks not supported):**
-
-  ```
-  senior_python_developer_latest.json
-  ```
-
----
-
-## 🛠 Example with Proxy
+**Command:**
 
 ```sh
-ljobx "Data Scientist" "Noida, Inda" \
-      --max-jobs 30 \
-      --proxy-config "config.yml"
+ljobx "Java Developer" "Delhi, India" --proxy-config "config.yml"
 ```
 
-Or use a remote config:
+-----
 
-```sh
-ljobx "SDE" "United States" \
-      --proxy-config "https://path.to/your/config.yml"
-```
+### 📂 Output & Data Fields
+
+Results are saved as timestamped `JSON` or `CSV` files (e.g., `keywords_YYYYMMDD_HHMMSS.json`), with a `_latest` symlink for easy access.
+
+The scraper extracts the following data for each job:
+
+* `job_id`
+* `title`
+* `company`
+* `location`
+* `posted_date`
+* `applicants` (if available)
+* `salary_range` (if available)
+* `description`
+* `apply` (URL and whether it's an "Easy Apply")
+* `recruiter` (Name, Title, and Profile URL, if available)

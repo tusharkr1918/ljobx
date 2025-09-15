@@ -4,5 +4,3 @@ fake-useragent>=2.2.0
 platformdirs>=4.4.0
 socksio>=1.0.0
 PyYAML~=6.0.2
-ljobx~=0.1.4
-pandas~=2.3.2

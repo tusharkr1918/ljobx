@@ -1,9 +1,9 @@
-import random
 
+import time
 import httpx
 import asyncio
+import random
 import itertools
-import time
 from typing import Dict, List
 from urllib.parse import urlencode
 from fake_useragent import UserAgent
@@ -13,7 +13,7 @@ from ljobx.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-class LinkedInApi:
+class LinkedInClient:
     """
     Handles all the network requests for the LinkedIn scraper using httpx,
     with round-robin proxy rotation and basic failover.
@@ -23,6 +23,7 @@ class LinkedInApi:
     BASE_DETAILS_URL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
 
     def __init__(self, concurrency_limit=5, delay: Dict[str, int] | None = None, proxies: List[str] | None = None):
+        self.concurrency_limit = concurrency_limit
         self.semaphore = asyncio.Semaphore(concurrency_limit)
         self.delay = delay
         self.ua = UserAgent()

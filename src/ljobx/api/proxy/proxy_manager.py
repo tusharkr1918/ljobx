@@ -1,8 +1,11 @@
+# ljobx/api/proxy/proxy_manager.py
+
 import httpx
 import asyncio
 from typing import Type, List
 
 from .webshare_provider import WebshareProvider
+from .file_proxy_provider import FileProxyProvider
 from .proxy_provider import ProxyProvider
 from ljobx.utils.logger import get_logger
 
@@ -63,12 +66,6 @@ class ProxyManager:
         """
 
         test_url = "https://api.ipify.org"
-
-        # This looks bs and kinda time-consuming, but I don't know any other way
-        # to validate proxies. Although, I have made it flag-based, if needed one
-        # can disable validating proxies from proxy configuration file as
-        # validate_proxies: false
-
         try:
             async with httpx.AsyncClient(proxy=proxy, timeout=timeout) as client:
                 resp = await client.get(test_url)
@@ -98,19 +95,34 @@ class ProxyManager:
     @classmethod
     async def get_proxies_from_config(cls, config_data: dict, validate: bool = True) -> List[str]:
         """
-        Fetch proxies from all configured providers and optionally validate them.
+        Fetch proxies from all configured providers and files, then optionally validate them.
 
-        :param config_data: Configuration with proxy provider information.
+        :param config_data: Configuration with proxy provider and file information.
         :param validate: If True, return only valid proxies. Defaults to True.
         :return: List of unique proxies (validated if requested).
         """
+        providers: List[ProxyProvider] = []
 
-        providers = cls.create_providers_from_config(config_data)
+        # Handle API-based providers from 'proxy_providers'
+        if "proxy_providers" in config_data:
+            try:
+                api_providers = cls.create_providers_from_config(config_data)
+                providers.extend(api_providers)
+            except ValueError as e:
+                log.error(f"Error initializing API-based proxy providers: {e}")
+
+        # Handle file-based proxies from 'proxies_files'
+        file_configs = config_data.get("proxies_files")
+        if isinstance(file_configs, list):
+            log.info(f"Loading proxies from {len(file_configs)} file configuration(s).")
+            file_provider = FileProxyProvider(file_configs=file_configs)
+            providers.append(file_provider)
+
         if not providers:
-            log.warning("No proxy providers initialized from config")
+            log.warning("No proxy providers or files configured. No proxies will be loaded.")
             return []
 
-        log.info(f"Fetching proxies from {len(providers)} provider(s)...")
+        log.info(f"Fetching proxies from {len(providers)} source(s)...")
         fetch_tasks = [provider.get_proxies() for provider in providers]
         list_of_proxy_lists = await asyncio.gather(*fetch_tasks)
 
@@ -124,6 +136,6 @@ class ProxyManager:
         log.info(f"Found a total of {len(all_proxies)} unique proxies.")
         if validate:
             return await cls._filter_valid_proxies(all_proxies)
+
         log.warning("Proxy validation is disabled, skipping validation...")
         return all_proxies
-

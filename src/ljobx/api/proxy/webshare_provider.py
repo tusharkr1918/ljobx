@@ -1,3 +1,5 @@
+# ljobx/api/proxy/webshare_provider.py
+
 from .proxy_provider import ProxyProvider
 from typing import List
 import httpx
@@ -17,6 +19,8 @@ class WebshareProvider(ProxyProvider):
     """
 
     def __init__(self, api_key: str, page_size: int = 100):
+        if not api_key:
+            raise ValueError("API key is required for WebshareProvider")
         super().__init__(api_key)
         self.page_size = page_size
         self.client = httpx.AsyncClient()

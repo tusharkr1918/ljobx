@@ -1,5 +1,7 @@
+# ljobx/api/proxy/proxy_provider.py
+
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional
 
 class ProxyProvider(ABC):
     """
@@ -9,11 +11,9 @@ class ProxyProvider(ABC):
     Each concrete provider (e.g., WebshareProvider) must implement methods to fetch
     proxies and close any associated resources.
 
-    :param api_key: API key required to access the provider.
+    :param api_key: API key required to access the provider. Can be optional.
     """
-    def __init__(self, api_key: str):
-        if not api_key:
-            raise ValueError("API key is required")
+    def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key
 
     @abstractmethod

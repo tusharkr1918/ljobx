@@ -5,7 +5,7 @@ import math
 from typing import Final
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs, unquote
-from ljobx.api.linkedin_api import LinkedInApi
+from ljobx.api.linkedin_client import LinkedInClient
 from ljobx.utils.const import FILTERS
 from ljobx.utils.logger import get_logger
 
@@ -24,7 +24,7 @@ class LinkedInScraper:
     JOBS_PER_PAGE: Final[int] = 10
 
     def __init__(self, concurrency_limit: int = 5, delay: Dict[str, int] | None = None, proxies: List[str] | None = None):
-        self.client = LinkedInApi(
+        self.client = LinkedInClient(
             concurrency_limit=concurrency_limit,
             delay=delay,
             proxies=proxies
@@ -33,7 +33,7 @@ class LinkedInScraper:
     @classmethod
     def build_search_query(cls, criteria: Dict[str, Any]) -> Dict[str, str]:
         """
-        Convert user-friendly search criteria into API-ready query parameters.
+        Convert user search criteria into API-ready query parameters.
         """
         query_params: Dict[str, str] = {}
         for key in ['keywords', 'location', 'start']:
@@ -132,7 +132,6 @@ class LinkedInScraper:
         html_content = await self.client.get_job_details(job["job_id"])
         return self._parse_job_details(job, html_content)
 
-    # - MODIFIED - The entire run method is updated for concurrency
     async def run(self, search_criteria: Dict[str, Any], max_jobs: int = 50) -> List[Dict[str, Any]]:
         """
         Fetches LinkedIn jobs matching the given criteria concurrently.
@@ -140,11 +139,13 @@ class LinkedInScraper:
         validated_query = self.build_search_query(search_criteria)
         log.debug("Starting fetch with validated query parameters: %s", json.dumps(validated_query, indent=2))
 
-        # 1. Determine how many pages to fetch in parallel
+        # Determine how many pages to fetch in parallel
         pages_to_fetch = math.ceil(max_jobs / self.JOBS_PER_PAGE)
-        log.info(f"Aiming for {max_jobs} jobs, preparing to fetch {pages_to_fetch} pages concurrently.")
+        log.info(
+            f"Aiming for {max_jobs} jobs, preparing to fetch {pages_to_fetch} pages with a concurrency limit of {self.client.concurrency_limit}."
+        )
 
-        # 2. Create a list of tasks for fetching each job list page
+        # Create a list of tasks for fetching each job list page
         page_fetch_tasks = []
         for i in range(pages_to_fetch):
             start_index = i * self.JOBS_PER_PAGE
@@ -152,10 +153,10 @@ class LinkedInScraper:
             query_params = self.build_search_query(current_criteria)
             page_fetch_tasks.append(self.client.get_job_list(query_params))
 
-        # 3. Run all page-fetching tasks concurrently
+        # Run all page-fetching tasks concurrently
         html_pages = await asyncio.gather(*page_fetch_tasks)
 
-        # 4. Process the HTML from all pages to build the initial job list
+        # Process the HTML from all pages to build the initial job list
         all_jobs: List[Dict[str, str]] = []
         for page_num, html_content in enumerate(html_pages):
             if not html_content or len(all_jobs) >= max_jobs:
