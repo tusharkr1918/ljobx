@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ljobx"
-version = "1.0.2"
+version = "1.2.0"
 authors = [
-    { name="Tushar Kumar", email="tusharkr1918@gmail.com" },
+    { name = "Tushar Kumar", email = "tusharkr1918@gmail.com" },
 ]
 description = "A powerful, asynchronous scraper for LinkedIn job postings without authentication."
 readme = "README.md"
@@ -34,6 +34,15 @@ Homepage = "https://github.com/tusharkr1918/ljobx"
 
 [project.scripts]
 ljobx = "ljobx.core.cli:main"
+ljobx-ui = "ljobx.ui.main:launch"
+
+[project.optional-dependencies]
+ui = [
+    "streamlit~=1.49.1",
+    "pandas~=2.3.2",
+    "streamlit-local-storage>=0.0.2",
+    "psutil~=7.1.0"
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
