@@ -1,144 +1,184 @@
-
-import time
-import httpx
+from __future__ import annotations
 import asyncio
+import httpx
 import random
+import time
 import itertools
-from typing import Dict, List
+import logging
+from typing import Dict, List, Optional
 from urllib.parse import urlencode
 from fake_useragent import UserAgent
+from dataclasses import dataclass
 
-from ljobx.utils.logger import get_logger
+# --- Configure basic logging for demonstration ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-logger = get_logger(__name__)
 
+class AllProxiesFailedError(Exception):
+    """Custom exception raised when all proxies fail for a request."""
+    pass
 
 class LinkedInClient:
     """
-    Handles all the network requests for the LinkedIn scraper using httpx,
-    with round-robin proxy rotation and basic failover.
+    An efficient and resilient async HTTP client for LinkedIn,
+    optimized for handling large proxy pools with lazy client initialization.
     """
-
     BASE_LIST_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
     BASE_DETAILS_URL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
 
-    def __init__(self, concurrency_limit=5, delay: Dict[str, int] | None = None, proxies: List[str] | None = None):
+    @dataclass(slots=True)
+    class _ProxyState:
+        """A simple data class to hold the state of each proxy."""
+        address: Optional[str]
+        failures: int = 0
+        cooldown_until: float = 0.0
+
+    def __init__(
+            self,
+            concurrency_limit: int = 5,
+            delay: Optional[Dict[str, int]] = None,
+            proxies: Optional[List[str]] = None,
+            max_retries_per_request: int = 10,
+    ):
         self.concurrency_limit = concurrency_limit
         self.semaphore = asyncio.Semaphore(concurrency_limit)
-        self.delay = delay
+        self.delay = delay or {"min_val": 0, "max_val": 0}
         self.ua = UserAgent()
+        self.max_retries = max_retries_per_request
 
-        if proxies:
-            self.client_map: Dict[str | None, httpx.AsyncClient] = {
-                proxy: httpx.AsyncClient(proxy=proxy) for proxy in proxies
-            }
+        # --- This dictionary will store our persistent clients, created on demand ---
+        self._clients: Dict[Optional[str], httpx.AsyncClient] = {}
+
+        if not proxies:
+            self._proxies: List[LinkedInClient._ProxyState] = [self._ProxyState(address=None)]
         else:
-            self.client_map = {None: httpx.AsyncClient()}
+            random.shuffle(proxies)
+            self._proxies: List[LinkedInClient._ProxyState] = [self._ProxyState(address=p) for p in proxies]
 
-        self._client_keys = list(self.client_map.keys())
-        self._proxy_cycle = itertools.cycle(self._client_keys)
+        logger.info(f"Initialized with {len(self._proxies)} proxies. Clients will be created on demand.")
+        self._proxy_cycle = itertools.cycle(self._proxies)
 
-        # Track proxy health (failures + cooldown)
-        # If any proxy fails, it will be skipped for a while until it recovers
-        # We decide it based on the number of failures and the time since the last failure
-        # Additional, max cooling time is 60s even though it fails multiple times
-
-        # None, is used as a fallback client when no proxies are provided
-        # this happens when the all proxies are cooling down
-
-        self._proxy_failures: Dict[str | None, int] = {k: 0 for k in self._client_keys}
-        self._proxy_cooldown: Dict[str | None, float] = {k: 0 for k in self._client_keys}
-
-    def _headers(self):
+    def _headers(self) -> Dict[str, str]:
         return {
             "User-Agent": self.ua.random,
-            "Accept": "text/html,application/xhtml+xml",
-            "Accept-Language": "en-US,en;q=0.9",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
         }
 
-    def _get_next_proxy(self) -> str | None:
-        """
-        Round-robin selection, skipping proxies in cooldown.
-        """
-        for _ in range(len(self._client_keys)):
-            proxy_key = next(self._proxy_cycle)
-            if time.time() >= self._proxy_cooldown[proxy_key]:
-                return proxy_key
-        return None  # fallback if all are cooling down
-
-    def _mark_failure(self, proxy_key: str | None):
-        """
-        Increment failure count and apply cooldown.
-        """
-        self._proxy_failures[proxy_key] += 1
-        backoff = min(60, 2 ** self._proxy_failures[proxy_key])  # exponential backoff up to 60s
-        self._proxy_cooldown[proxy_key] = time.time() + backoff
-        logger.warning(
-            "Proxy %s failed (%d times). Cooling down for %ds.",
-            proxy_key,
-            self._proxy_failures[proxy_key],
-            backoff,
-        )
-
-    def _mark_success(self, proxy_key: str | None):
-        """
-        Reset failure counter on success.
-        """
-        self._proxy_failures[proxy_key] = 0
-        self._proxy_cooldown[proxy_key] = 0
-
-    async def _fetch_with_retry(self, url, attempts=3):
-        for _ in range(attempts):
-            proxy_key = self._get_next_proxy()
-            try:
-                return await self._fetch(url, proxy_key=proxy_key)
-            except [httpx.HTTPStatusError, httpx.RequestError, httpx.ConnectError] as e:
-                self._mark_failure(proxy_key)
-                logger.debug("Proxy %s failed on retry: %s", proxy_key, e)
-                continue
+    def _get_next_available_proxy(self) -> Optional[LinkedInClient._ProxyState]:
+        for _ in range(len(self._proxies)):
+            proxy_state = next(self._proxy_cycle)
+            if time.time() >= proxy_state.cooldown_until:
+                return proxy_state
         return None
 
-    async def _fetch(self, url, timeout=10, proxy_key=None):
-        if proxy_key is None:
-            proxy_key = self._get_next_proxy()
-        client = self.client_map[proxy_key]
+    @staticmethod
+    def _mark_failure(proxy_state: LinkedInClient._ProxyState):
+        proxy_state.failures += 1
+        backoff_time = min(300, 2**proxy_state.failures)
+        proxy_state.cooldown_until = time.time() + backoff_time
+        logger.warning(
+            f"Proxy {proxy_state.address} failed ({proxy_state.failures} times). "
+            f"Cooldown for {backoff_time}s."
+        )
 
-        if proxy_key:
-            logger.debug(f"Fetching URL: {url} via proxy: ...{proxy_key[-20:]}")
-        else:
-            logger.debug(f"Fetching URL: {url}")
+    @staticmethod
+    def _mark_success(proxy_state: LinkedInClient._ProxyState):
+        if proxy_state.failures > 0:
+            logger.info(f"Proxy {proxy_state.address} is working again. Resetting failure count.")
+        proxy_state.failures = 0
+        proxy_state.cooldown_until = 0
 
-        try:
-            response = await client.get(url, headers=self._headers(), timeout=timeout)
-            response.raise_for_status()
-            self._mark_success(proxy_key)
-            return response.text
-        except Exception as e:
-            self._mark_failure(proxy_key)
-            raise logger.error("Error fetching URL %s: %s", url, e)
+    async def _fetch_with_retries(self, url: str, timeout: int = 10) -> str:
+        last_exception = None
+        for attempt in range(self.max_retries):
+            proxy_state = self._get_next_available_proxy()
 
-    async def get_job_list(self, query_params):
-        async with self.semaphore:
-            await asyncio.sleep(random.randint(self.delay["min_val"], self.delay["max_val"]))
-            url = f"{self.BASE_LIST_URL}?{urlencode(query_params)}"
+            if proxy_state is None:
+                logger.warning("All proxies are on cooldown. Waiting for 5 seconds...")
+                await asyncio.sleep(5)
+                continue
+
             try:
-                return await self._fetch(url, timeout=10)
-            except Exception as e:
-                logger.error("Error fetching job list for URL %s: %s", url, e)
-                return None
+                # Get the client for this proxy, or create it if it doesn't exist.
+                client = self._clients.get(proxy_state.address)
+                if client is None or client.is_closed:
+                    log_message = (
+                        f"Creating client for proxy: {proxy_state.address}"
+                        if proxy_state.address
+                        else "Creating local client (no proxy)"
+                    )
+                    logger.info(log_message)
 
-    async def get_job_details(self, job_id):
+                    client = httpx.AsyncClient(proxy=proxy_state.address, follow_redirects=True)
+                    self._clients[proxy_state.address] = client
+
+                via_message = f"via {proxy_state.address}" if proxy_state.address else "via local IP"
+                logger.debug(f"Attempt {attempt + 1}/{self.max_retries}: Fetching {url} {via_message}")
+
+                response = await client.get(url, headers=self._headers(), timeout=timeout)
+                response.raise_for_status()
+
+                self._mark_success(proxy_state)
+                return response.text
+
+            except Exception as e:
+                proxy_id = proxy_state.address if proxy_state.address else "local IP"
+                logger.error(f"Attempt {attempt + 1} failed for {url} with proxy {proxy_id}: {e}")
+                self._mark_failure(proxy_state)
+
+        raise AllProxiesFailedError(
+            f"Failed to fetch {url} after {self.max_retries} attempts. "
+            f"Last error: {last_exception}"
+        )
+
+    async def get_job_list(self, params: Dict) -> str:
         async with self.semaphore:
-            await asyncio.sleep(random.randint(self.delay["min_val"], self.delay["max_val"]))
+            await asyncio.sleep(random.uniform(self.delay["min_val"], self.delay["max_val"]))
+            url = f"{self.BASE_LIST_URL}?{urlencode(params)}"
+            return await self._fetch_with_retries(url)
+
+    async def get_job_details(self, job_id: str) -> str:
+        async with self.semaphore:
+            await asyncio.sleep(random.uniform(self.delay["min_val"], self.delay["max_val"]))
             url = self.BASE_DETAILS_URL.format(job_id=job_id)
-            try:
-                return await self._fetch(url, timeout=5)
-            except Exception as e:
-                logger.warning("Could not fetch job details for ID %s: %s", job_id, e)
-                return {"error": str(e)}
+            return await self._fetch_with_retries(url, timeout=5)
 
     async def close(self):
-        logger.debug(f"Closing {len(self.client_map)} client instance(s)...")
-        tasks = [client.aclose() for client in self.client_map.values()]
+        """Gracefully close all created client sessions."""
+        logger.info(f"Closing {len(self._clients)} client instance(s)...")
+        tasks = [client.aclose() for client in self._clients.values()]
         await asyncio.gather(*tasks)
-        logger.debug("All client instances closed.")
+        logger.info("All client instances closed.")
+
+# --- Example Usage (same as before) ---
+async def main():
+    # Using 'None' will test with your local IP.
+    # Replace with your proxy list: proxies=["http://user:pass@host:port", ...]
+    client = LinkedInClient(
+        proxies=None,
+        concurrency_limit=5,
+        delay={"min_val": 1, "max_val": 3},
+        max_retries_per_request=5
+    )
+    try:
+        search_params = {
+            "keywords": "Python Developer",
+            "location": "Noida, Uttar Pradesh, India",
+            "start": 0
+        }
+        print("Fetching job list...")
+        job_list_html = await client.get_job_list(search_params)
+        print(f"Successfully fetched job list (first 100 chars): {job_list_html[:100].strip()}...")
+    except AllProxiesFailedError as e:
+        print(f"A critical request failed after all retries: {e}")
+    except httpx.ConnectError as e:
+        print(f"Connection could not be established: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+    finally:
+        await client.close()
+
+if __name__ == "__main__":
+    asyncio.run(main())

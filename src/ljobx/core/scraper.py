@@ -1,33 +1,28 @@
 import asyncio
 import json
-from typing import Dict, List, Any
 import math
-from typing import Final
+from typing import Dict, List, Any, Final, Optional
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs, unquote
 from ljobx.api.linkedin_client import LinkedInClient
 from ljobx.utils.const import FILTERS
 from ljobx.utils.logger import get_logger
+from multiprocessing import Queue
 
 log = get_logger(__name__)
-
 
 def clean_text(text: str | None) -> str | None:
     """Strip leading/trailing whitespace from a string."""
     return text.strip() if text else None
 
-
 class LinkedInScraper:
-    """
-    Scrapes LinkedIn job listings using a direct API approach with async concurrency.
-    """
     JOBS_PER_PAGE: Final[int] = 10
 
     def __init__(self, concurrency_limit: int = 5, delay: Dict[str, int] | None = None, proxies: List[str] | None = None):
         self.client = LinkedInClient(
             concurrency_limit=concurrency_limit,
             delay=delay,
-            proxies=proxies
+            proxies=proxies,
         )
 
     @classmethod
@@ -111,6 +106,7 @@ class LinkedInScraper:
 
         salary_range_el = soup.find("div", class_="salary compensation__salary")
         details["salary_range"] = salary_range_el.get_text(strip=True) if salary_range_el else None
+
         recruiter_section = soup.find("div", class_="message-the-recruiter")
         if recruiter_section:
             recruiter_details: Dict[str, str | None] = {}
@@ -122,30 +118,30 @@ class LinkedInScraper:
             recruiter_details["profile_url"] = profile_el.get('href') if profile_el else None
             details["recruiter"] = recruiter_details
         else:
-            details["recruiter"] = None
+            details["recruiter"] = { "name": None, "title": None, "profile_url": None }
+
         return details
 
-    async def _get_and_parse_details(self, job: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Fetch and parse detailed info for a single job asynchronously.
-        """
+    async def _get_and_parse_details(self, job: Dict[str, Any], progress_queue: Optional[Queue] = None) -> Dict[str, Any]:
         html_content = await self.client.get_job_details(job["job_id"])
-        return self._parse_job_details(job, html_content)
+        parsed_details = self._parse_job_details(job, html_content)
+        if progress_queue:
+            progress_queue.put("JOB") # Send a "tick" for one completed job
+        return parsed_details
 
-    async def run(self, search_criteria: Dict[str, Any], max_jobs: int = 50) -> List[Dict[str, Any]]:
-        """
-        Fetches LinkedIn jobs matching the given criteria concurrently.
-        """
+    async def run(self, search_criteria: Dict[str, Any], max_jobs: int = 50, progress_queue: Optional[Queue] = None) -> List[Dict[str, Any]]:
+        # Phase 1: Initialization
+        if progress_queue:
+            progress_queue.put("INIT")
+
         validated_query = self.build_search_query(search_criteria)
         log.debug("Starting fetch with validated query parameters: %s", json.dumps(validated_query, indent=2))
-
-        # Determine how many pages to fetch in parallel
         pages_to_fetch = math.ceil(max_jobs / self.JOBS_PER_PAGE)
         log.info(
             f"Aiming for {max_jobs} jobs, preparing to fetch {pages_to_fetch} pages with a concurrency limit of {self.client.concurrency_limit}."
         )
 
-        # Create a list of tasks for fetching each job list page
+        # Phase 2: Finding Jobs
         page_fetch_tasks = []
         for i in range(pages_to_fetch):
             start_index = i * self.JOBS_PER_PAGE
@@ -153,46 +149,42 @@ class LinkedInScraper:
             query_params = self.build_search_query(current_criteria)
             page_fetch_tasks.append(self.client.get_job_list(query_params))
 
-        # Run all page-fetching tasks concurrently
         html_pages = await asyncio.gather(*page_fetch_tasks)
 
-        # Process the HTML from all pages to build the initial job list
         all_jobs: List[Dict[str, str]] = []
         for page_num, html_content in enumerate(html_pages):
-            if not html_content or len(all_jobs) >= max_jobs:
-                if not html_content:
-                    log.info(f"Page {page_num + 1} returned no content, likely end of results.")
-                break
+            if progress_queue:
+                progress_queue.put("PAGE") # Send a "tick" for one page fetched
 
+            if not html_content or len(all_jobs) >= max_jobs:
+                if not html_content: log.info(f"Page {page_num + 1} returned no content, likely end of results.")
+                break
             soup = BeautifulSoup(html_content, "html.parser")
             job_cards = soup.find_all("div", class_="base-search-card")
-
             if not job_cards:
                 log.info(f"No job cards found on page {page_num + 1}. Reached the end of listings.")
                 break
-
             for card in job_cards:
-                if len(all_jobs) >= max_jobs:
-                    break
+                if len(all_jobs) >= max_jobs: break
                 urn = card.get("data-entity-urn", "")
                 title_el = card.find("h3", class_="base-search-card__title")
                 company_el = card.find("h4", class_="base-search-card__subtitle")
-
                 if urn and title_el and company_el:
                     all_jobs.append({
-                        "job_id": urn.split(":")[-1],
-                        "title": title_el.get_text(strip=True),
-                        "company": company_el.get_text(strip=True)
+                        "job_id": urn.split(":")[-1], "title": title_el.get_text(strip=True), "company": company_el.get_text(strip=True)
                     })
             log.info(f"Processed page {page_num + 1}: found {len(job_cards)} jobs. Total jobs so far: {len(all_jobs)}")
 
+        # End of Phase 2
+        if progress_queue:
+            # Pass the number of jobs found so the UI knows the total for Phase 3
+            progress_queue.put(f"PAGE_END:{len(all_jobs)}")
 
-        # 5. The rest of the logic remains the same: fetch details concurrently
+        # Phase 3: Scraping Job Details
         log.info("Found %d total jobs. Now fetching details...", len(all_jobs))
         target_jobs = all_jobs[:max_jobs]
-        detail_tasks = [self._get_and_parse_details(job) for job in target_jobs]
+        detail_tasks = [self._get_and_parse_details(job, progress_queue) for job in target_jobs]
         details_results = await asyncio.gather(*detail_tasks)
-
         details_map = {res["job_id"]: res for res in details_results if "job_id" in res}
         final_results: List[Dict[str, Any]] = []
         for job in target_jobs:
@@ -200,10 +192,8 @@ class LinkedInScraper:
             if details:
                 job.update(details)
                 final_results.append(job)
-
         await self.client.close()
         return final_results
-
 
 async def run_scraper(
         search_criteria: Dict[str, Any],
@@ -211,6 +201,7 @@ async def run_scraper(
         concurrency_limit: int = 5,
         delay: Dict[str, int] | None = None,
         proxies: List[str] | None = None,
+        progress_queue: Optional[Queue] = None,
 ) -> List[Dict[str, Any]]:
     """
     Initialize and run LinkedInScraper with optional concurrency, delay, and proxies.
@@ -224,6 +215,6 @@ async def run_scraper(
     scraper = LinkedInScraper(
         concurrency_limit=concurrency_limit,
         delay=delay,
-        proxies=proxies
+        proxies=proxies,
     )
-    return await scraper.run(search_criteria=search_criteria, max_jobs=max_jobs)
+    return await scraper.run(search_criteria=search_criteria, max_jobs=max_jobs, progress_queue=progress_queue)

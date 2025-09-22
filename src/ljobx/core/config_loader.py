@@ -6,6 +6,10 @@ import httpx
 class ConfigLoader:
     @staticmethod
     def load(path_or_url: str) -> dict:
+        """
+        Loads a YAML configuration from a file path, a URL, or a raw string.
+        """
+        config_text = ""
         if path_or_url.lower().startswith(('http://', 'https://')):
             try:
                 response = httpx.get(path_or_url, follow_redirects=True)
@@ -13,6 +17,10 @@ class ConfigLoader:
                 config_text = response.text
             except httpx.RequestError as e:
                 raise ValueError(f"Failed to fetch YAML from URL: {e}")
+
+        # Check if it's raw YAML content (contains newlines)
+        elif '\n' in path_or_url:
+            config_text = path_or_url
         else:
             try:
                 with open(path_or_url, 'r') as f:

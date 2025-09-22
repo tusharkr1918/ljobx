@@ -1,5 +1,3 @@
-# ljobx/cli.py
-
 import argparse
 import asyncio
 import csv
@@ -44,8 +42,6 @@ def save_results(results: list, keyword: str, to_csv: bool = False, out_dir: Pat
         flat_results = [_flatten_dict(res) for res in results]
         all_keys = set(key for res in flat_results for key in res.keys())
 
-        # Remove the recruiter key since it is a key of nested dictionary,
-        # and we have already flattened it with parent key as prefix
         all_keys.discard('recruiter')
 
         preferred_order = [
@@ -81,7 +77,6 @@ def save_results(results: list, keyword: str, to_csv: bool = False, out_dir: Pat
     except (OSError, NotImplementedError):
         shutil.copy2(out, latest)
     return out
-
 
 def main():
     """Parses command-line arguments and runs the LinkedIn job scraper."""
@@ -135,19 +130,26 @@ def main():
         "concurrency_limit": args.concurrency,
         "delay": {"min_val": args.delay[0], "max_val": args.delay[1]},
     }
+
+    proxy_config_path = args.proxy_config
+
+    if not proxy_config_path and config.DEFAULT_PROXY_CONFIG_PATH.exists():
+        log.info(f"No --proxy-config flag provided. Using default system config: {config.DEFAULT_PROXY_CONFIG_PATH}")
+        proxy_config_path = str(config.DEFAULT_PROXY_CONFIG_PATH)
+
     run_config = {
         "Search Criteria": search_criteria,
         "Scraper Settings": scraper_settings,
-        "System Settings": { "log_level": args.log_level, "proxy_config_path": args.proxy_config, "output_path": str(output_dir) }
+        "System Settings": { "log_level": args.log_level, "proxy_config_path": proxy_config_path, "output_path": str(output_dir) }
     }
     log.info("\n--- LJOBX Configuration ---\n%s\n-----------------------------", json.dumps(run_config, indent=4, default=str))
 
     proxies = []
-    if args.proxy_config:
-        log.info(f"Loading proxies from '{args.proxy_config}'...")
+    if proxy_config_path:
+        log.info(f"Loading proxies from '{proxy_config_path}'...")
         try:
-            config_data = ConfigLoader.load(args.proxy_config)
-            proxies = asyncio.run(ProxyManager.get_proxies_from_config(config_data, validate=config_data.get("validate_proxies", True)))
+            config_data = ConfigLoader.load(proxy_config_path)
+            proxies = asyncio.run(ProxyManager.get_proxies_from_config(config_data, validate=config_data.get("validate_proxies", False)))
             if not proxies:
                 log.warning("No working proxies found. The scraper will run without proxies.")
         except (ValueError, FileNotFoundError) as e:
