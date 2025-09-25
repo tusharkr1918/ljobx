@@ -12,7 +12,6 @@ import time
 from queue import Empty
 
 import pandas as pd
-import psutil
 import streamlit as st
 from streamlit_local_storage import LocalStorage
 
@@ -182,7 +181,6 @@ def main():
         st.session_state.using_default_proxy = using_default
 
         # --- Set Default Values ---
-        # These are the fallback values if nothing is in local storage or command line.
         defaults = {
             "keywords": "", "location": "", "max_jobs": 5,
             "concurrency": 2, "delay_range": (3.0, 8.0), "log_level": "INFO",
@@ -190,13 +188,12 @@ def main():
             "experience_level": [], "remote": "On-site",
         }
 
-        # Load from local storage, falling back to defaults
         for key, value in defaults.items():
             st.session_state[key] = initial_state.get(key, value)
 
         # --- Initialize remaining state variables ---
         st.session_state.searching = False
-        st.session_state.pid = None
+        st.session_state.scraper_process = None
         st.session_state.log_lines = []
         st.session_state.results = None
         st.session_state.status_message = None
@@ -210,35 +207,18 @@ def main():
         st.session_state.jobs_processed = 0
 
     # --- Overrides for Basic Mode ---
-    # This block now runs AFTER initial state is loaded, ensuring it overrides
-    # any values from local storage when in basic mode.
     if basic_mode:
-        # Start with conservative defaults for basic mode
         concurrency_to_use = 2
         delay_to_use = (3.0, 8.0)
         log_level_to_use = "INFO"
 
-        # If a default proxy config exists, set more aggressive defaults
         if config.DEFAULT_PROXY_CONFIG_PATH.exists():
             concurrency_to_use = 5
             delay_to_use = (2.0, 4.0)
 
-        # Now, apply command-line overrides on top of the basic defaults.
-        # This will always take precedence over local storage in basic mode.
-        if args.concurrency is not None:
-            st.session_state.concurrency = args.concurrency
-        else:
-            st.session_state.concurrency = concurrency_to_use
-
-        if args.delay is not None:
-            st.session_state.delay_range = (float(args.delay[0]), float(args.delay[1]))
-        else:
-            st.session_state.delay_range = delay_to_use
-
-        if args.log_level is not None:
-            st.session_state.log_level = args.log_level
-        else:
-            st.session_state.log_level = log_level_to_use
+        st.session_state.concurrency = args.concurrency if args.concurrency is not None else concurrency_to_use
+        st.session_state.delay_range = (float(args.delay[0]), float(args.delay[1])) if args.delay is not None else delay_to_use
+        st.session_state.log_level = args.log_level if args.log_level is not None else log_level_to_use
 
     st.title("LinkedIn Job Extractor")
     st.markdown("An interactive UI for the `ljobx` scraping tool. Enter your search criteria and start the search.")
@@ -276,13 +256,11 @@ def main():
 
                 st.markdown("---")
                 st.subheader("🔌 Proxy Configuration")
-
                 if st.session_state.proxy_config_content:
                     if st.session_state.get('using_default_proxy'):
                         st.success("✅ Using the system's default proxy configuration.")
                     else:
                         st.info("ℹ️ Using a user-uploaded proxy configuration.")
-
                     if not st.session_state.get('using_default_proxy'):
                         if st.button("Restore to default proxy settings"):
                             try:
@@ -293,19 +271,15 @@ def main():
                                     local_storage.setItem("form_inputs", json.dumps(stored_settings))
                             except Exception as e:
                                 st.error(f"Could not update local storage: {e}")
-
                             default_content_on_disk = None
                             if config.DEFAULT_PROXY_CONFIG_PATH.exists():
-                                # noinspection PyBroadException
                                 try:
                                     default_content_on_disk = config.DEFAULT_PROXY_CONFIG_PATH.read_text()
                                 except Exception:
                                     pass
-
                             st.session_state.proxy_config_content = default_content_on_disk
                             st.session_state.using_default_proxy = True if default_content_on_disk else False
                             st.rerun()
-
                 st.file_uploader(
                     "**Upload a new Proxy Configuration File**",
                     type=['yml', 'yaml'],
@@ -341,6 +315,7 @@ def main():
         elif msg_type == "warning": status_placeholder.warning(msg_text)
         else: status_placeholder.error(msg_text)
 
+    # --- Displaying results ---
     if st.session_state.results is not None and not st.session_state.results.empty:
         results_df = st.session_state.results
         with results_placeholder.container():
@@ -367,7 +342,6 @@ def main():
                 st.dataframe(results_df)
 
             st.markdown("---")
-
             if basic_mode:
                 results_list = results_df.to_dict(orient='records')
                 ts = time.strftime("%Y%m%d_%H%M%S")
@@ -387,22 +361,11 @@ def main():
                 file_name_base = st.session_state.keywords.replace(' ', '_').lower()
                 with dl1:
                     csv_data = generate_csv_data(results_list)
-                    st.download_button(
-                        label="📥 Download as CSV",
-                        data=csv_data,
-                        file_name=f"{file_name_base}_{ts}.csv",
-                        mime="text/csv",
-                        use_container_width=True
-                    )
+                    st.download_button(label="📥 Download as CSV", data=csv_data, file_name=f"{file_name_base}_{ts}.csv", mime="text/csv", use_container_width=True)
                 with dl2:
                     json_data = json.dumps(results_list, indent=2, ensure_ascii=False).encode('utf-8')
-                    st.download_button(
-                        label="📥 Download as JSON",
-                        data=json_data,
-                        file_name=f"{file_name_base}_{ts}.json",
-                        mime="application/json",
-                        use_container_width=True
-                    )
+                    st.download_button(label="📥 Download as JSON", data=json_data, file_name=f"{file_name_base}_{ts}.json", mime="application/json", use_container_width=True)
+
 
     if not basic_mode and st.session_state.log_lines:
         with log_placeholder.container():
@@ -421,15 +384,11 @@ def main():
             st.rerun()
 
     if stop_search:
-        if st.session_state.pid:
-            try:
-                p = psutil.Process(st.session_state.pid)
-                p.terminate()
-                st.warning("✅ Search stopped by user.")
-            except psutil.NoSuchProcess:
-                st.info("Process was already finished.")
+        if st.session_state.scraper_process: # MODIFICATION: Check for process object
+            st.session_state.scraper_process.terminate() # MODIFICATION: Terminate it directly
+            st.warning("✅ Search stopped by user.")
             st.session_state.searching = False
-            st.session_state.pid = None
+            st.session_state.scraper_process = None
             st.session_state.queues = None
             st.rerun()
 
@@ -446,22 +405,19 @@ def main():
         st.session_state.pages_processed = 0
         st.session_state.jobs_processed = 0
 
-        # Use the session state values which have been correctly overridden
         log_level = st.session_state.log_level
         concurrency = st.session_state.concurrency
         delay_range = st.session_state.delay_range
 
         configure_logging(log_level)
         root_logger = logging.getLogger()
-
         ui_log_handler = None
         if not basic_mode:
             ui_log_handler = QueueLogHandler(log_queue)
             ui_log_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s", "%H:%M:%S"))
             root_logger.addHandler(ui_log_handler)
-
         proxies = []
-        if not basic_mode and st.session_state.proxy_config_content:
+        if st.session_state.proxy_config_content:
             try:
                 logging.info("Loading proxy configuration...")
                 config_data = ConfigLoader.load(st.session_state.proxy_config_content)
@@ -473,7 +429,6 @@ def main():
                 st.error(f"Failed to load proxies: {e}")
                 st.session_state.searching = False
                 st.rerun()
-
         if not basic_mode and ui_log_handler:
             root_logger.removeHandler(ui_log_handler)
 
@@ -492,7 +447,7 @@ def main():
 
         p = multiprocessing.Process(target=run_scraper_in_process, args=(results_queue, log_queue, progress_queue, search_criteria, scraper_settings, log_level))
         p.start()
-        st.session_state.pid = p.pid
+        st.session_state.scraper_process = p # We gonna store the whole process object
         st.session_state.start_job = False
         st.rerun()
 
@@ -505,7 +460,6 @@ def main():
                 st.session_state.log_lines.append(log_line)
         except Empty:
             pass
-
         try:
             while True:
                 progress_update = progress_queue.get_nowait()
@@ -531,8 +485,10 @@ def main():
         except Empty:
             pass
 
-        if st.session_state.pid:
-            if not psutil.pid_exists(st.session_state.pid):
+        # --- Process completion check ---
+        process = st.session_state.get('scraper_process')
+        if process:
+            if not process.is_alive():
                 st.session_state.progress = 100
                 progress_placeholder.progress(1.0, "Search complete!")
                 try:
@@ -549,16 +505,19 @@ def main():
                 except Empty:
                     st.session_state.status_message = ("warning", "Process finished unexpectedly with no results.")
                     st.session_state.results = pd.DataFrame()
+
                 st.session_state.searching = False
-                st.session_state.pid = None
+                st.session_state.scraper_process = None
                 st.session_state.queues = None
                 st.rerun()
             else:
                 time.sleep(0.5)
                 st.rerun()
         else:
-            time.sleep(0.5)
-            st.rerun()
+            # This case handles if the process object was somehow lost from state
+            if st.session_state.searching:
+                st.session_state.searching = False
+                st.rerun()
 
     # --- Save current state to local storage ---
     current_state = {
@@ -568,10 +527,10 @@ def main():
             "proxy_config_content", "log_level"
         ] if key in st.session_state
     }
-    # Only save if not in basic mode, to prevent basic-mode values from being persisted.
     if not basic_mode:
         local_storage.setItem("form_inputs", json.dumps(current_state))
 
 if __name__ == '__main__':
+    multiprocessing.set_start_method('spawn', force=True)
     multiprocessing.freeze_support()
     main()

@@ -1,2 +1,5 @@
 [logger]
 level = "error"
+
+[server]
+headless = true
