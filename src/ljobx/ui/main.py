@@ -3,9 +3,11 @@ import subprocess
 import sys
 from pathlib import Path
 import argparse
+import os
+
 
 def launch():
-    """Finds and runs the Streamlit web_ui.py file with a custom startup banner."""
+    """Runs the Streamlit web_ui.py file with a custom startup banner."""
     parser = argparse.ArgumentParser(
         description="Launch the ljobx web UI.",
         formatter_class=argparse.RawTextHelpFormatter
@@ -19,7 +21,6 @@ def launch():
     )
 
     # --- Override Flags for Basic Mode ---
-    # These flags will be passed to the Streamlit script to override basic defaults.
     parser.add_argument(
         "--concurrency",
         type=int,
@@ -60,7 +61,6 @@ def launch():
         command.extend(["--"] + streamlit_args)
 
     try:
-        # Run streamlit as a subprocess and capture its output
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
@@ -69,7 +69,6 @@ def launch():
             bufsize=1
         )
 
-        # Stream output line by line
         for line in process.stdout:
             if "You can now view your Streamlit app in your browser." in line:
                 line = line.replace(

@@ -1,0 +1,9 @@
+[logger]
+level = "error"
+
+[server]
+headless = true
+enableCORS = true
+
+[browser]
+gatherUsageStats = false

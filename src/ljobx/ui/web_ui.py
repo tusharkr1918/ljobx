@@ -124,8 +124,12 @@ def run_scraper_in_process(results_q, log_q, progress_q, _search_criteria, _scra
     asyncio.set_event_loop(loop)
     try:
         logging.info("Scraper process started...")
-        results = loop.run_until_complete(run_scraper(search_criteria=_search_criteria, progress_queue=progress_q, **_scraper_settings))
-        results_q.put(results)
+        # Assumes run_scraper now returns (results, stats)
+        results, stats = loop.run_until_complete(
+            run_scraper(search_criteria=_search_criteria, progress_queue=progress_q, **_scraper_settings)
+        )
+        # Pass back a dictionary with both results and stats
+        results_q.put({'data': results, 'stats': stats})
         logging.info("Scraper process finished.")
     except Exception as e:
         logging.error(f"Scraper process failed: {e}", exc_info=True)
@@ -140,6 +144,8 @@ def handle_proxy_upload():
         st.session_state.just_uploaded_proxy = True
         st.session_state.using_default_proxy = False # It's a user-uploaded file, not default
 
+
+# noinspection PyBroadException
 def main():
     # --- Argument Parsing for Basic Mode Overrides ---
     parser = argparse.ArgumentParser()
@@ -186,6 +192,7 @@ def main():
             "concurrency": 2, "delay_range": (3.0, 8.0), "log_level": "INFO",
             "date_posted": "Any time", "job_type": [],
             "experience_level": [], "remote": "On-site",
+            "exact_search": True,
         }
 
         for key, value in defaults.items():
@@ -228,8 +235,9 @@ def main():
         col1, col2 = st.columns(2)
         with col1:
             st.text_input("**Keywords**", key="keywords", placeholder="e.g., Senior Python Developer")
+            st.checkbox("Exact Search (searches for exact keywords)", key="exact_search")
         with col2:
-            st.text_input("**Location**", key="location", placeholder="e.g., Noida, India or Remote")
+            st.text_input("**Location** (city, state, country)", key="location", placeholder="e.g., Noida, India or Remote")
 
         st.subheader("📊 Filters")
         f1, f2 = st.columns(2)
@@ -337,7 +345,14 @@ def main():
                 overrides = { "apply_is_easy_apply": "EASY_APPLY", "recruiter_profile_url": "RECRUITER_PROFILE", }
                 display_df = display_df.rename(columns=overrides)
                 display_df.columns = [h.upper() for h in display_df.columns]
-                st.dataframe(display_df)
+
+                st.dataframe(
+                    display_df,
+                    column_config={
+                        "APPLY_URL": st.column_config.LinkColumn("Apply Link"),
+                        "RECRUITER_PROFILE": st.column_config.LinkColumn("Recruiter Profile")
+                    }
+                )
             else:
                 st.dataframe(results_df)
 
@@ -432,8 +447,22 @@ def main():
         if not basic_mode and ui_log_handler:
             root_logger.removeHandler(ui_log_handler)
 
+        # --- Check for basic mode with no proxies ---
+        if basic_mode and len(proxies) <= 1:
+            logging.warning("Basic mode with no proxies detected. Overriding settings for stability.")
+            concurrency = 2
+            delay_range = (3.0, 8.0)
+            st.session_state.status_message = (
+                "warning",
+                "Running in safe mode for stability. No proxies were found or loaded. \nIf searches feel slow, please contact the DevOps team for a performance boost."
+            )
+
+        keywords_to_search = st.session_state.keywords
+        if st.session_state.exact_search:
+            keywords_to_search = f'"{keywords_to_search}"'
+
         search_criteria = {
-            'keywords': st.session_state.keywords, 'location': st.session_state.location,
+            'keywords': keywords_to_search, 'location': st.session_state.location,
             'date_posted': st.session_state.date_posted if st.session_state.date_posted != "Any time" else None,
             'job_type': st.session_state.job_type, 'experience_level': st.session_state.experience_level,
             'remote': st.session_state.remote if st.session_state.remote != "On-site" else None,
@@ -447,7 +476,7 @@ def main():
 
         p = multiprocessing.Process(target=run_scraper_in_process, args=(results_queue, log_queue, progress_queue, search_criteria, scraper_settings, log_level))
         p.start()
-        st.session_state.scraper_process = p # We gonna store the whole process object
+        st.session_state.scraper_process = p # We will store the whole process object
         st.session_state.start_job = False
         st.rerun()
 
@@ -496,12 +525,30 @@ def main():
                     if isinstance(final_output, Exception):
                         st.session_state.status_message = ("error", f"An error occurred: {final_output}")
                         st.session_state.results = pd.DataFrame()
-                    elif final_output:
-                        st.session_state.status_message = ("success", f"✅ Search complete! Found {len(final_output)} jobs.")
-                        st.session_state.results = pd.DataFrame(final_output)
+
+                    elif isinstance(final_output, dict):
+                        results_data = final_output.get('data', [])
+                        stats = final_output.get('stats', {'success': 0, 'failures': 0})
+                        total_reqs = stats.get('success', 0) + stats.get('failures', 0)
+
+                        if results_data:
+                            st.session_state.status_message = ("success", f"✅ Search complete! Found {len(results_data)} jobs.")
+                        else:
+                            st.session_state.status_message = ("warning", "Search complete. No jobs found.")
+
+                        if total_reqs > 0:
+                            failure_rate = stats.get('failures', 0) / total_reqs
+                            if failure_rate >= 0.4:
+                                st.session_state.status_message = (
+                                    "warning",
+                                    "Search completed, but several connection errors occurred. The proxies may not be functioning properly. \nPlease consider contacting the DevOps team."
+                                )
+                        st.session_state.results = pd.DataFrame(results_data)
+
                     else:
                         st.session_state.status_message = ("warning", "Search complete. No jobs found.")
                         st.session_state.results = pd.DataFrame()
+
                 except Empty:
                     st.session_state.status_message = ("warning", "Process finished unexpectedly with no results.")
                     st.session_state.results = pd.DataFrame()
@@ -519,16 +566,21 @@ def main():
                 st.session_state.searching = False
                 st.rerun()
 
-    # --- Save current state to local storage ---
-    current_state = {
-        key: st.session_state[key] for key in [
-            "keywords", "location", "max_jobs", "concurrency", "delay_range",
-            "date_posted", "job_type", "experience_level", "remote",
-            "proxy_config_content", "log_level"
-        ] if key in st.session_state
-    }
+    # We will conditionally build the list of keys to save to local storage
+    keys_to_save = [
+        "keywords", "location", "max_jobs", "date_posted", "job_type",
+        "experience_level", "remote", "log_level", "exact_search"
+    ]
+
     if not basic_mode:
-        local_storage.setItem("form_inputs", json.dumps(current_state))
+        # Only add advanced/sensitive keys if not in basic mode
+        keys_to_save.extend(["concurrency", "delay_range", "proxy_config_content"])
+
+    current_state = {
+        key: st.session_state[key] for key in keys_to_save if key in st.session_state
+    }
+    local_storage.setItem("form_inputs", json.dumps(current_state))
+
 
 if __name__ == '__main__':
     multiprocessing.set_start_method('spawn', force=True)

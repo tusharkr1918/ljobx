@@ -46,6 +46,8 @@ class LinkedInClient:
         self.delay = delay or {"min_val": 0, "max_val": 0}
         self.ua = UserAgent()
         self.max_retries = max_retries_per_request
+        self.success_count = 0
+        self.failure_count = 0
 
         # --- This dictionary will store our persistent clients, created on demand ---
         self._clients: Dict[Optional[str], httpx.AsyncClient] = {}
@@ -73,8 +75,8 @@ class LinkedInClient:
                 return proxy_state
         return None
 
-    @staticmethod
-    def _mark_failure(proxy_state: LinkedInClient._ProxyState):
+    def _mark_failure(self, proxy_state: LinkedInClient._ProxyState):
+        self.failure_count += 1
         proxy_state.failures += 1
         backoff_time = min(300, 2**proxy_state.failures)
         proxy_state.cooldown_until = time.time() + backoff_time
@@ -83,8 +85,8 @@ class LinkedInClient:
             f"Cooldown for {backoff_time}s."
         )
 
-    @staticmethod
-    def _mark_success(proxy_state: LinkedInClient._ProxyState):
+    def _mark_success(self, proxy_state: LinkedInClient._ProxyState):
+        self.success_count += 1
         if proxy_state.failures > 0:
             logger.info(f"Proxy {proxy_state.address} is working again. Resetting failure count.")
         proxy_state.failures = 0
@@ -102,6 +104,7 @@ class LinkedInClient:
 
             try:
                 # Get the client for this proxy, or create it if it doesn't exist.
+                # Possibly it's the right way to avoid startup delay
                 client = self._clients.get(proxy_state.address)
                 if client is None or client.is_closed:
                     log_message = (

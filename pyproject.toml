@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ljobx"
-version = "1.3.5"
+version = "2.1.0"
 authors = [
     { name = "Tushar Kumar", email = "tusharkr1918@gmail.com" },
 ]
@@ -36,9 +36,13 @@ ljobx-ui = "ljobx.ui.main:launch"
 
 [project.optional-dependencies]
 ui = [
+    "pandas~=2.3.2",
     "streamlit~=1.50.0",
     "streamlit-local-storage~=0.0.25",
 ]
+
+[tool.setuptools]
+include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]

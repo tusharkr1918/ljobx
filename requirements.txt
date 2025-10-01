@@ -4,4 +4,3 @@ PyYAML~=6.0.2
 beautifulsoup4~=4.13.5
 streamlit~=1.50.0
 pandas~=2.3.2
-ljobx~=1.3.5

@@ -1,7 +1,7 @@
 import asyncio
 import json
 import math
-from typing import Dict, List, Any, Final, Optional
+from typing import Dict, List, Any, Final, Optional, Tuple
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs, unquote
 from ljobx.api.linkedin_client import LinkedInClient
@@ -129,7 +129,7 @@ class LinkedInScraper:
             progress_queue.put("JOB") # Send a "tick" for one completed job
         return parsed_details
 
-    async def run(self, search_criteria: Dict[str, Any], max_jobs: int = 50, progress_queue: Optional[Queue] = None) -> List[Dict[str, Any]]:
+    async def run(self, search_criteria: Dict[str, Any], max_jobs: int = 50, progress_queue: Optional[Queue] = None) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
         # Phase 1: Initialization
         if progress_queue:
             progress_queue.put("INIT")
@@ -193,7 +193,12 @@ class LinkedInScraper:
                 job.update(details)
                 final_results.append(job)
         await self.client.close()
-        return final_results
+
+        stats = {
+            'success': self.client.success_count,
+            'failures': self.client.failure_count
+        }
+        return final_results, stats
 
 async def run_scraper(
         search_criteria: Dict[str, Any],
@@ -202,7 +207,7 @@ async def run_scraper(
         delay: Dict[str, int] | None = None,
         proxies: List[str] | None = None,
         progress_queue: Optional[Queue] = None,
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     """
     Initialize and run LinkedInScraper with optional concurrency, delay, and proxies.
     """
