@@ -1,15 +1,15 @@
-# ljobx/api/proxy/proxy_manager.py
+# src/ljobx/api/proxy/proxy_manager.py
 
 import httpx
 import asyncio
+import logging
 from typing import Type, List
 
 from .webshare_provider import WebshareProvider
 from .file_proxy_provider import FileProxyProvider
 from .proxy_provider import ProxyProvider
-from ljobx.utils.logger import get_logger
 
-log = get_logger(__name__)
+log = logging.getLogger(__name__)
 
 class ProxyManager:
     """

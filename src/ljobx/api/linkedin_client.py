@@ -1,3 +1,5 @@
+# src/ljobx/api/linkedin_client.py
+
 from __future__ import annotations
 import asyncio
 import httpx
@@ -10,8 +12,6 @@ from urllib.parse import urlencode
 from fake_useragent import UserAgent
 from dataclasses import dataclass
 
-# --- Configure basic logging for demonstration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 

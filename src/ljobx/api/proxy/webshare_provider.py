@@ -1,12 +1,12 @@
-# ljobx/api/proxy/webshare_provider.py
+# src/ljobx/api/proxy/webshare_provider.py
 
 from .proxy_provider import ProxyProvider
 from typing import List
 import httpx
+import logging
 from urllib.parse import urlparse
-from ljobx.utils.logger import get_logger
 
-log = get_logger(__name__)
+log = logging.getLogger(__name__)
 
 class WebshareProvider(ProxyProvider):
     """

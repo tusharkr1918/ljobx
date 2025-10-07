@@ -6,10 +6,10 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs, unquote
 from ljobx.api.linkedin_client import LinkedInClient
 from ljobx.utils.const import FILTERS
-from ljobx.utils.logger import get_logger
+import logging
 from multiprocessing import Queue
 
-log = get_logger(__name__)
+log = logging.getLogger(__name__)
 
 def clean_text(text: str | None) -> str | None:
     """Strip leading/trailing whitespace from a string."""
@@ -66,7 +66,7 @@ class LinkedInScraper:
             )
             return {**details, **html_content}
 
-        soup = BeautifulSoup(html_content, "html.parser")
+        soup = BeautifulSoup(html_content, "html.parser") # pyright: ignore[reportArgumentType]
         top_card = soup.find("section", class_="top-card-layout")
         if top_card:
             location_el = top_card.find("span", class_="topcard__flavor--bullet")
@@ -115,7 +115,7 @@ class LinkedInScraper:
             title_el = recruiter_section.find("h4", class_="base-main-card__subtitle")
             recruiter_details["title"] = title_el.get_text(strip=True) if title_el else None
             profile_el = recruiter_section.find("a", class_="base-card__full-link")
-            recruiter_details["profile_url"] = profile_el.get('href') if profile_el else None
+            recruiter_details["profile_url"] = profile_el.get('href') if profile_el else None # pyright: ignore[reportArgumentType]
             details["recruiter"] = recruiter_details
         else:
             details["recruiter"] = { "name": None, "title": None, "profile_url": None }
@@ -171,7 +171,7 @@ class LinkedInScraper:
                 company_el = card.find("h4", class_="base-search-card__subtitle")
                 if urn and title_el and company_el:
                     all_jobs.append({
-                        "job_id": urn.split(":")[-1], "title": title_el.get_text(strip=True), "company": company_el.get_text(strip=True)
+                        "job_id": urn.split(":")[-1], "title": title_el.get_text(strip=True), "company": company_el.get_text(strip=True) # pyright: ignore[reportAttributeAccessIssue]
                     })
             log.info(f"Processed page {page_num + 1}: found {len(job_cards)} jobs. Total jobs so far: {len(all_jobs)}")
 

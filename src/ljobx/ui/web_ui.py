@@ -4,7 +4,6 @@ import csv
 import io
 import json
 import logging
-import logging.handlers
 import math
 import multiprocessing
 import sys
@@ -20,7 +19,7 @@ from ljobx.core.config import config
 from ljobx.core.config_loader import ConfigLoader
 from ljobx.core.scraper import run_scraper
 from ljobx.utils.const import FILTERS
-from ljobx.utils.logger import QueueLogHandler, configure_logging
+from ljobx.utils.logger import QueueLogHandler, setup_root_logger
 
 st.set_page_config(page_title="ljobx | LinkedIn Job Extractor", page_icon="🔎", layout="centered")
 st.markdown("""
@@ -96,39 +95,38 @@ def generate_csv_data(results: list) -> bytes:
 def run_scraper_in_process(results_q, log_q, progress_q, _search_criteria, _scraper_settings, _log_level):
     """Target function for the scraper process."""
 
-    # 1. Basic logging configuration
-    configure_logging(_log_level.upper())
+    # Configure the logger for THIS SUBPROCESS.
+    # It cannot inherit the configuration from the main process so ya.
+    log_level = logging.getLevelNamesMapping()[_log_level.upper()]
     root_logger = logging.getLogger()
-
+    root_logger.setLevel(log_level)
     root_logger.handlers = []
 
-    log_format = logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        "%H:%M:%S"
+    formatter = logging.Formatter(
+        '[%(asctime)s] - %(levelname)s [%(threadName)s] - %(message)s (%(filename)s:%(lineno)d - %(name)s)',
+        '%Y-%m-%d %H:%M:%S'
     )
 
-    log_handler_queue = QueueLogHandler(log_q)
-    log_handler_queue.setFormatter(log_format)
-    root_logger.addHandler(log_handler_queue)
+    queue_handler = QueueLogHandler(log_q)
+    queue_handler.setFormatter(formatter)
+    root_logger.addHandler(queue_handler)
 
-    file_handler = logging.handlers.RotatingFileHandler(
+    file_handler = logging.handlers.RotatingFileHandler( # pyright: ignore[reportAttributeAccessIssue]
         filename=config.LOG_FILE,
-        maxBytes=5 * 1024 * 1024,  # 5 MB
+        maxBytes=5 * 1024 * 1024,
         backupCount=3,
         encoding='utf-8'
     )
-    file_handler.setFormatter(log_format)
+    file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         logging.info("Scraper process started...")
-        # Assumes run_scraper now returns (results, stats)
         results, stats = loop.run_until_complete(
             run_scraper(search_criteria=_search_criteria, progress_queue=progress_q, **_scraper_settings)
         )
-        # Pass back a dictionary with both results and stats
         results_q.put({'data': results, 'stats': stats})
         logging.info("Scraper process finished.")
     except Exception as e:
@@ -142,19 +140,23 @@ def handle_proxy_upload():
     if st.session_state.proxy_uploader is not None:
         st.session_state.proxy_config_content = st.session_state.proxy_uploader.read().decode("utf-8")
         st.session_state.just_uploaded_proxy = True
-        st.session_state.using_default_proxy = False # It's a user-uploaded file, not default
+        st.session_state.using_default_proxy = False
 
 
 # noinspection PyBroadException
 def main():
+    # --- MOVED LOGGER SETUP TO THE TOP ---
+    # This ensures the logger is configured before any other code runs.
+    setup_root_logger(logging.INFO)
+
     # --- Argument Parsing for Basic Mode Overrides ---
     parser = argparse.ArgumentParser()
     parser.add_argument("--basic", action="store_true")
     parser.add_argument("--concurrency", type=int, default=None)
     parser.add_argument("--delay", type=int, nargs=2, default=None)
     parser.add_argument("--log-level", type=str, default=None)
+    parser.add_argument("--proxy-config", type=str, default=None)
 
-    # sys.argv[1:] contains arguments passed after '--' from the launcher
     args, _ = parser.parse_known_args(sys.argv[1:])
     basic_mode = args.basic
     local_storage = LocalStorage()
@@ -170,11 +172,16 @@ def main():
         final_proxy_content = proxy_from_storage
 
         default_content_on_disk = None
+        logging.info(f"Checking for default proxy config at: {config.DEFAULT_PROXY_CONFIG_PATH}")
         if config.DEFAULT_PROXY_CONFIG_PATH.exists():
             try:
                 default_content_on_disk = config.DEFAULT_PROXY_CONFIG_PATH.read_text()
-            except Exception:
+                logging.info("Default proxy configuration found at the system path.")
+            except Exception as e:
+                logging.error(f"Found default proxy config but failed to read it: {e}")
                 pass
+        else:
+            logging.info("No default proxy configuration found at the system path.")
 
         if proxy_from_storage:
             if proxy_from_storage == default_content_on_disk:
@@ -219,13 +226,21 @@ def main():
         delay_to_use = (3.0, 8.0)
         log_level_to_use = "INFO"
 
-        if config.DEFAULT_PROXY_CONFIG_PATH.exists():
+        if config.DEFAULT_PROXY_CONFIG_PATH.exists() or args.proxy_config:
             concurrency_to_use = 5
             delay_to_use = (2.0, 4.0)
 
         st.session_state.concurrency = args.concurrency if args.concurrency is not None else concurrency_to_use
         st.session_state.delay_range = (float(args.delay[0]), float(args.delay[1])) if args.delay is not None else delay_to_use
         st.session_state.log_level = args.log_level if args.log_level is not None else log_level_to_use
+
+        if args.proxy_config:
+            st.session_state.proxy_config_override = args.proxy_config
+    
+    # Update the logger level if it was changed by the user in the UI
+    log_level_from_state = st.session_state.get("log_level", "INFO")
+    logging.getLogger().setLevel(log_level_from_state.upper())
+
 
     st.title("LinkedIn Job Extractor")
     st.markdown("An interactive UI for the `ljobx` scraping tool. Enter your search criteria and start the search.")
@@ -399,8 +414,8 @@ def main():
             st.rerun()
 
     if stop_search:
-        if st.session_state.scraper_process: # MODIFICATION: Check for process object
-            st.session_state.scraper_process.terminate() # MODIFICATION: Terminate it directly
+        if st.session_state.scraper_process:
+            st.session_state.scraper_process.terminate()
             st.warning("✅ Search stopped by user.")
             st.session_state.searching = False
             st.session_state.scraper_process = None
@@ -423,19 +438,14 @@ def main():
         log_level = st.session_state.log_level
         concurrency = st.session_state.concurrency
         delay_range = st.session_state.delay_range
-
-        configure_logging(log_level)
-        root_logger = logging.getLogger()
-        ui_log_handler = None
-        if not basic_mode:
-            ui_log_handler = QueueLogHandler(log_queue)
-            ui_log_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s", "%H:%M:%S"))
-            root_logger.addHandler(ui_log_handler)
+        
         proxies = []
-        if st.session_state.proxy_config_content:
+        proxy_config_to_use = st.session_state.get("proxy_config_override") or st.session_state.proxy_config_content
+
+        if proxy_config_to_use:
             try:
                 logging.info("Loading proxy configuration...")
-                config_data = ConfigLoader.load(st.session_state.proxy_config_content)
+                config_data = ConfigLoader.load(proxy_config_to_use)
                 proxies = asyncio.run(ProxyManager.get_proxies_from_config(config_data, validate=config_data.get("validate_proxies", True)))
                 if not proxies:
                     logging.warning("No working proxies found. The scraper will run without proxies.")
@@ -444,8 +454,6 @@ def main():
                 st.error(f"Failed to load proxies: {e}")
                 st.session_state.searching = False
                 st.rerun()
-        if not basic_mode and ui_log_handler:
-            root_logger.removeHandler(ui_log_handler)
 
         # --- Check for basic mode with no proxies ---
         if basic_mode and len(proxies) <= 1:
@@ -476,7 +484,7 @@ def main():
 
         p = multiprocessing.Process(target=run_scraper_in_process, args=(results_queue, log_queue, progress_queue, search_criteria, scraper_settings, log_level))
         p.start()
-        st.session_state.scraper_process = p # We will store the whole process object
+        st.session_state.scraper_process = p
         st.session_state.start_job = False
         st.rerun()
 
@@ -561,19 +569,16 @@ def main():
                 time.sleep(0.5)
                 st.rerun()
         else:
-            # This case handles if the process object was somehow lost from state
             if st.session_state.searching:
                 st.session_state.searching = False
                 st.rerun()
 
-    # We will conditionally build the list of keys to save to local storage
     keys_to_save = [
         "keywords", "location", "max_jobs", "date_posted", "job_type",
         "experience_level", "remote", "log_level", "exact_search"
     ]
 
     if not basic_mode:
-        # Only add advanced/sensitive keys if not in basic mode
         keys_to_save.extend(["concurrency", "delay_range", "proxy_config_content"])
 
     current_state = {

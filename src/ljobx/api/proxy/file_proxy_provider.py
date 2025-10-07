@@ -1,11 +1,11 @@
-# ljobx/api/proxy/file_proxy_provider.py
+# src/ljobx/api/proxy/file_proxy_provider.py
 
 from typing import List, Dict
 import re
+import logging
 from .proxy_provider import ProxyProvider
-from ljobx.utils.logger import get_logger
 
-log = get_logger(__name__)
+log = logging.getLogger(__name__)
 
 # Regex to check if a string starts with a protocol like 'http://'
 PROTOCOL_REGEX = re.compile(r"^[a-zA-Z0-9]+://")

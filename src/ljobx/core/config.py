@@ -36,7 +36,7 @@ DEFAULT_PROXY_CONFIG_PATH = CONFIG_DIR / "proxy_config.yml"
 # ----------------------------
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-LOG_FILE = LOG_DIR / "scraper.log"
+LOG_FILE = LOG_DIR / "ljobx_scraper.log"
 
 
 # ----------------------------

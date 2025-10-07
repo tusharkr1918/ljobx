@@ -3,7 +3,6 @@ import subprocess
 import sys
 from pathlib import Path
 import argparse
-import os
 
 
 def launch():
@@ -39,6 +38,14 @@ def launch():
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="(Optional) Override the default log level for basic mode."
     )
+    # --- ADDED: Allow proxy-config override in basic mode ---
+    parser.add_argument(
+        "--proxy-config",
+        type=str,
+        metavar="FILE_OR_URL",
+        help="(Optional) Override the default proxy config for basic mode."
+    )
+
 
     args = parser.parse_args()
 
@@ -56,6 +63,9 @@ def launch():
         streamlit_args.extend(["--delay", str(args.delay[0]), str(args.delay[1])])
     if args.log_level is not None:
         streamlit_args.extend(["--log-level", args.log_level])
+    # --- ADDED: Pass proxy_config to streamlit ---
+    if args.proxy_config is not None:
+        streamlit_args.extend(["--proxy-config", args.proxy_config])
 
     if streamlit_args:
         command.extend(["--"] + streamlit_args)

@@ -1,8 +1,9 @@
 # ljobx/utils/logger.py
 
 import logging
-import logging.handlers
-import sys
+from logging import StreamHandler, FileHandler
+from logging.handlers import RotatingFileHandler
+from typing import List, Optional
 from queue import Queue
 
 # Import the config object to get the LOG_FILE path
@@ -17,50 +18,59 @@ class QueueLogHandler(logging.Handler):
     def emit(self, record):
         self.log_queue.put(self.format(record))
 
-def configure_logging(level: str = "INFO"):
+def setup_root_logger(level: int = logging.INFO) -> logging.Logger:
     """
-    Sets the log levels for the root logger and other noisy libraries.
-    This function does NOT add handlers; it only sets levels.
+    Set up a root logger with the specified level.
+
+    Note:
+    - If `force` is not set to True and any logging methods
+    (e.g., `logging.info()`, `logging.debug()`) have been called
+    before this function, the root logger may already be configured
+    with default settings instead of the ones specified here.
     """
-    log_level = getattr(logging, level.upper(), logging.INFO)
-    logging.getLogger().setLevel(log_level)
-
-    # Set levels for noisy libraries
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("asyncio").setLevel(logging.WARNING)
-
-# Main setup function for non-UI scripts
-def setup_logger(level: str = "INFO") -> None:
-    """
-    Sets up the logger with handlers for file and console output.
-    """
-    configure_logging(level)
-
-    root_logger = logging.getLogger()
-    if root_logger.hasHandlers():
-        return
-
-    log_format = logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%m-%d %H:%M:%S"
+    logging.basicConfig(
+        level=level,
+        format='[%(asctime)s] - %(levelname)s [%(threadName)s] - %(message)s (%(filename)s:%(lineno)d - %(name)s)',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[
+            StreamHandler(),
+            RotatingFileHandler(config.LOG_FILE, maxBytes=5*1024*1024, backupCount=5),
+            FileHandler('app_recent.log', mode='w')
+        ],
+        force=True
     )
+    return logging.getLogger()
 
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setFormatter(log_format)
-    root_logger.addHandler(stream_handler)
+def setup_module_logger(name: str, level: Optional[int] = None, propagate: bool = False, handlers: Optional[List] = None) -> logging.Logger:
+    """
+    Set up a module-specific logger with the given name and optional level.
 
-    # This handler writes logs to the file specified in our config.
-    file_handler = logging.handlers.RotatingFileHandler(
-        filename=config.LOG_FILE,
-        maxBytes=5 * 1024 * 1024,  # 5 MB per file
-        backupCount=3,  # Keep 3 old log files
-        encoding='utf-8'
-    )
-    file_handler.setFormatter(log_format)
-    root_logger.addHandler(file_handler)
+    Notes:
+    - A module logger inherits the root logger's level, filters only.
+    - In case if the module logger has no handlers, messages are propagated to the root logger.
+    - Root logger applies its handlers, level filtering, and formatters to the propagated messages. (If module logger have
+      log level set to DEBUG, and root logger have level set to INFO, then DEBUG messages from module logger will be filtered out by root logger).
+    - If you want to disable propagation, set `propagate` to False.
 
+    - Setting any configuration (handlers, formatters, etc.) will override the root logger's configuration.
+    """
 
-def get_logger(name: str) -> logging.Logger:
-    """A helper to get a logger instance."""
-    return logging.getLogger(name)
+    logger = logging.getLogger(name)
+
+    if level is not None:
+        logger.setLevel(level)
+
+    if handlers:
+        for handler in handlers:
+            if not isinstance(handler, logging.Handler):
+                raise TypeError("All items in handlers must be instances of logging.Handler")
+            logger.addHandler(handler)
+
+    logger.propagate = propagate
+    if not propagate and not logger.hasHandlers():
+        logging.warning(
+            f"Module logger '{name}' has no handlers and propagation is disabled. "
+            "It will not be able to output log messages."
+        )
+
+    return logger
